@@ -1,0 +1,46 @@
+{
+  "name": "@zincapp/mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for ZincApp Developer Portal — enables AI coding assistants to search docs, read API reference, and execute sandbox API calls",
+  "type": "module",
+  "bin": {
+    "zincapp-mcp-server": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js"
+  },
+  "keywords": [
+    "mcp",
+    "zincapp",
+    "developer-portal",
+    "ai-agent",
+    "claude-code"
+  ],
+  "license": "MIT",
+  "private": false,
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zincapp/zincapp-mcp-server"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
