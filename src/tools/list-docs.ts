@@ -13,9 +13,10 @@ export function registerListDocs(server: McpServer, client: ZincAppClient) {
     server.tool(
         'list_docs',
         'List all available ZincApp developer documentation with titles and summaries.',
-        {},
-        async () => {
-            const docs = await client.get<DocSummary[]>('/docs?limit=200')
+        { locale: z.enum(['en', 'es']).optional().describe('Language locale (default: config locale)') },
+        async ({ locale }) => {
+            const params = locale ? { locale } : undefined
+            const docs = await client.get<DocSummary[]>('/docs?limit=200', params)
 
             const text = docs.length === 0
                 ? 'No documentation available.'

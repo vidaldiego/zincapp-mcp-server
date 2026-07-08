@@ -5,6 +5,7 @@ import * as os from 'node:os'
 export interface McpConfig {
     agentToken: string
     apiBaseUrl: string
+    locale: string
 }
 
 /**
@@ -15,6 +16,7 @@ export function loadConfig(): McpConfig {
     // Environment variables take precedence
     let agentToken = process.env.ZINCAPP_AGENT_TOKEN || ''
     let apiBaseUrl = process.env.ZINCAPP_API_URL || ''
+    let locale = process.env.ZINCAPP_LOCALE || ''
 
     // Try .zincapp.json if env vars missing
     if (!agentToken) {
@@ -29,6 +31,7 @@ export function loadConfig(): McpConfig {
                 const parsed = JSON.parse(raw)
                 if (!agentToken && parsed.agentToken) agentToken = parsed.agentToken
                 if (!apiBaseUrl && parsed.apiUrl) apiBaseUrl = parsed.apiUrl
+                if (!locale && parsed.locale) locale = parsed.locale
                 break
             } catch {
                 // File doesn't exist or invalid JSON — continue
@@ -46,5 +49,6 @@ export function loadConfig(): McpConfig {
     return {
         agentToken,
         apiBaseUrl: apiBaseUrl || 'https://api.zincapp.com/api',
+        locale: locale || 'en',
     }
 }

@@ -14,10 +14,17 @@ export function registerSearchDocs(server: McpServer, client: ZincAppClient) {
     server.tool(
         'search_docs',
         'Search ZincApp developer documentation by keyword. Returns matching documents ranked by relevance.',
-        { query: z.string().describe('Search query'), limit: z.number().optional().describe('Max results (default 10)') },
-        async ({ query, limit }) => {
+        {
+            query: z.string().describe('Search query'),
+            limit: z.number().optional().describe('Max results (default 10)'),
+            locale: z.enum(['en', 'es']).optional().describe('Language locale (default: config locale)'),
+        },
+        async ({ query, limit, locale }) => {
+            const params: Record<string, string> = {}
+            if (locale) params.locale = locale
             const results = await client.get<SearchResult[]>(
-                `/docs/search?q=${encodeURIComponent(query)}&limit=${limit || 10}`
+                `/docs/search?q=${encodeURIComponent(query)}&limit=${limit || 10}`,
+                Object.keys(params).length > 0 ? params : undefined
             )
 
             const text = results.length === 0

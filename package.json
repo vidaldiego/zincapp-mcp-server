@@ -1,7 +1,7 @@
 {
   "name": "@zincapp/mcp-server",
-  "version": "1.0.1",
-  "description": "MCP server for ZincApp Developer Portal — enables AI coding assistants to search docs, read API reference, and execute sandbox API calls",
+  "version": "1.2.0",
+  "description": "MCP server for ZincApp — search docs, read API reference, execute sandbox calls, and audit/complete waste removals (retiradas)",
   "type": "module",
   "bin": {
     "zincapp-mcp-server": "./dist/index.js"
