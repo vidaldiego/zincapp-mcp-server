@@ -18,9 +18,9 @@ const EditSchema = z.object({
     ntId: z.number().nullable().optional(),
 })
 
-interface BeginResponse {
-    applyToken: string
-    expiresAt: string
+interface CurrentElevation {
+    companyId: number | null
+    elevated: boolean
 }
 
 interface ApplyResult {
@@ -31,30 +31,35 @@ interface ApplyResult {
 export function registerApplyCompletion(server: McpServer, client: ZincAppClient) {
     server.tool(
         'apply_completion',
-        'Apply confirmed field completions to waste removals, ATTRIBUTED TO A REAL HUMAN. The operator ' +
-            'must supply a fresh Google id-token (googleIdToken) — the write is recorded in the audit log ' +
-            'under that person, never a system user. Two internal steps: begin-session verifies Google + ' +
-            'the operator\'s write permission and mints a short-lived, single-use, batch-bound token; apply ' +
-            'then writes each edit through the framework (hooks + audit fire). Requires the RETIRADAS_WRITE ' +
-            'scope + companyId in the allowlist. Only apply edits the human has explicitly confirmed.',
+        'Apply confirmed field completions to waste removals, UNDER YOUR ACTIVE OPERATOR ELEVATION. ' +
+            'You (the platform operator) must first elevate into the company from the web (IAM) — this ' +
+            'tool NEVER opens an elevation itself (that requires the web step-up). It checks your current ' +
+            'elevation, and if you are not elevated into this company it asks you to do so in the web, then ' +
+            'applies each confirmed edit through the framework (hooks + audit fire) as the elevated ' +
+            '_sysadmin, recording the real operator in the elevation audit trail. Requires the ' +
+            'RETIRADAS_WRITE scope + companyId in the token allowlist. Only apply edits you have confirmed.',
         {
-            companyId: z.number().describe('The company (tenant) id, e.g. 9'),
-            googleIdToken: z.string().describe('A fresh Google id-token identifying the operator authorizing the write'),
+            companyId: z.number().describe('The company (tenant) id you are elevated into, e.g. 9'),
             edits: z.array(EditSchema).describe('The confirmed edits (from propose_completion), one per removal'),
         },
-        async ({ companyId, googleIdToken, edits }) => {
-            // Step 1: exchange the Google id-token for a short-lived apply token bound to THIS batch.
-            const begin = await client.post<BeginResponse>('/mwm/retirada/session/begin', {
-                companyId,
-                googleIdToken,
-                edits,
-            })
+        async ({ companyId, edits }) => {
+            // Step 1: check the operator's current elevation (opened in the web with step-up).
+            const elev = await client.get<CurrentElevation>('/mwm/retirada/operator/current-elevation')
+            if (!elev.elevated) {
+                return { content: [{ type: 'text' as const, text:
+                    `No estás elevado a ningún tenant. Elévate a la company ${companyId} desde el portal web ` +
+                    `(IAM → elevar), y luego vuelve a lanzar apply_completion.` }] }
+            }
+            if (elev.companyId !== companyId) {
+                return { content: [{ type: 'text' as const, text:
+                    `Estás elevado a la company ${elev.companyId}, no a la ${companyId}. Des-elévate y eleva a ` +
+                    `la ${companyId} desde el portal web, luego vuelve a lanzar apply_completion.` }] }
+            }
 
-            // Step 2: apply the batch, carrying the token. The backend re-verifies the binding + human.
+            // Step 2: apply under the active elevation. The backend re-verifies eligibility + the live OPEN.
             const result = await client.post<ApplyResult>(
-                '/mwm/retirada/apply',
-                { companyId, confirm: true, edits },
-                { 'X-Agent-Apply-Token': begin.applyToken }
+                '/mwm/retirada/apply-elevated',
+                { companyId, confirm: true, edits }
             )
 
             const ok = result.applied.length
@@ -64,9 +69,10 @@ export function registerApplyCompletion(server: McpServer, client: ZincAppClient
                 : ''
             const text =
                 `# Aplicado · company ${companyId}\n` +
-                `${ok} retirada(s) actualizada(s)${bad ? `, ${bad} con error` : ''}, atribuidas al operator.\n` +
+                `${ok} retirada(s) actualizada(s)${bad ? `, ${bad} con error` : ''}, bajo tu elevación de operador.\n` +
                 (ok ? '\nAplicadas: ' + result.applied.join(', ') : '') +
-                failLines
+                failLines +
+                `\n\n_Recuerda des-elevarte desde el portal web con un motivo cuando termines._`
 
             return { content: [{ type: 'text' as const, text }] }
         }
