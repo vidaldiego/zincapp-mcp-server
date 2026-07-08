@@ -48,7 +48,9 @@ export function loadConfig(): McpConfig {
 
     return {
         agentToken,
-        apiBaseUrl: apiBaseUrl || 'https://api.zincapp.com/api',
+        // api.zincapp.com serves the API at the root (agent/v1/…), NOT under /api — that prefix
+        // belongs to the my.zincapp.com portal gateway. Override with ZINCAPP_API_URL if needed.
+        apiBaseUrl: apiBaseUrl || 'https://api.zincapp.com',
         locale: locale || 'en',
     }
 }
