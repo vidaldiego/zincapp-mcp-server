@@ -16,6 +16,7 @@ import { registerApplyCompletion } from './apply-completion.js'
 import { registerProposeAuthorizations } from './propose-authorizations.js'
 import { registerApplyAuthorization } from './apply-authorization.js'
 import { registerProposeNt } from './propose-nt.js'
+import { registerLookupAuthorization } from './lookup-authorization.js'
 
 export function registerAllTools(server: McpServer, client: ZincAppClient) {
     registerSearchDocs(server, client)
@@ -34,4 +35,5 @@ export function registerAllTools(server: McpServer, client: ZincAppClient) {
     registerProposeAuthorizations(server, client)
     registerApplyAuthorization(server, client)
     registerProposeNt(server, client)
+    registerLookupAuthorization(server, client)
 }
