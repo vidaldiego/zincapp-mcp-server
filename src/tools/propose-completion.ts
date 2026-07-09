@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { ZincAppClient } from '../client.js'
+import { resolveElevation } from './elevation.js'
 
 interface CreateEntitySpec {
     cif: string
@@ -36,16 +37,16 @@ export function registerProposeCompletion(server: McpServer, client: ZincAppClie
             'a typed diff: per field, the current value vs. the value read from the document, whether it ' +
             'resolves to a DB entity, and (for a carrier not yet in the DB) the data to create it. ' +
             'READ-ONLY — proposes only, never writes. One removal per call (cost control: scanned/CDO docs ' +
-            'each cost an AI call). Requires RETIRADAS_AUDIT scope + the companyId in the allowlist.',
+            'each cost an AI call). Runs under YOUR active operator elevation — the company is the one you ' +
+            'elevated into from the web (no companyId parameter).',
         {
-            companyId: z.number().describe('The company (tenant) id, e.g. 9'),
             removalId: z.number().describe('The removal id to propose completions for'),
         },
-        async ({ companyId, removalId }) => {
-            const d = await client.get<RemovalDiff>(
-                `/mwm/retirada/propose/${removalId}`,
-                { companyId: String(companyId) }
-            )
+        async ({ removalId }) => {
+            const elev = await resolveElevation(client)
+            if ('content' in elev) return elev
+
+            const d = await client.get<RemovalDiff>(`/mwm/retirada/propose/${removalId}`)
 
             if (d.changes.length === 0 && d.warnings.length === 0) {
                 return { content: [{ type: 'text' as const, text: `# Retirada ${d.removalId} — ${d.label}\n\nSin cambios propuestos (${d.docCount} doc.).` }] }

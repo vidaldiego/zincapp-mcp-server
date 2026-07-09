@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { ZincAppClient } from '../client.js'
+import { resolveElevation } from './elevation.js'
 
 interface NtParties {
     originId: number | null
@@ -34,16 +35,17 @@ export function registerProposeNt(server: McpServer, client: ZincAppClient) {
             'NT-LER that would be created to cover it, with the create-vs-reuse dedup (existing contract ' +
             'by parties, existing NT by code) and the human-review warnings. Read-only, never writes — ' +
             'creating an NT is high-risk (wrong contract, duplicate, capacity), so a human confirms and ' +
-            'creates via the web UI. Requires the RETIRADAS_AUDIT scope.',
+            'creates via the web UI. Runs under YOUR active operator elevation — the company is the one ' +
+            'you elevated into from the web (no companyId parameter).',
         {
-            companyId: z.number().describe('The company (tenant) id, e.g. 9'),
             removalId: z.number().describe('The removal id (must have no NT)'),
         },
-        async ({ companyId, removalId }) => {
-            const p = await client.get<NtProposal>(
-                `/mwm/retirada/propose-nt/${removalId}`,
-                { companyId: String(companyId) }
-            )
+        async ({ removalId }) => {
+            const elev = await resolveElevation(client)
+            if ('content' in elev) return elev
+            const companyId = elev.companyId
+
+            const p = await client.get<NtProposal>(`/mwm/retirada/propose-nt/${removalId}`)
 
             if (p.alreadyHasNt) {
                 return { content: [{ type: 'text' as const, text: `La retirada ${removalId} ya tiene NT. Nada que proponer.` }] }

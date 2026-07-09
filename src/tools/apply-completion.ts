@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { ZincAppClient } from '../client.js'
+import { resolveElevation } from './elevation.js'
 
 // The confirmed edit shape (mirrors the backend ReconcileApplyItem). Produced from propose_completion.
 const EditSchema = z.object({
@@ -18,11 +19,6 @@ const EditSchema = z.object({
     ntId: z.number().nullable().optional(),
 })
 
-interface CurrentElevation {
-    companyId: number | null
-    elevated: boolean
-}
-
 interface ApplyResult {
     applied: number[]
     failed: { removalId: number; error: string }[]
@@ -34,32 +30,25 @@ export function registerApplyCompletion(server: McpServer, client: ZincAppClient
         'Apply confirmed field completions to waste removals, UNDER YOUR ACTIVE OPERATOR ELEVATION. ' +
             'You (the platform operator) must first elevate into the company from the web (IAM) — this ' +
             'tool NEVER opens an elevation itself (that requires the web step-up). It checks your current ' +
-            'elevation, and if you are not elevated into this company it asks you to do so in the web, then ' +
-            'applies each confirmed edit through the framework (hooks + audit fire) as the elevated ' +
-            '_sysadmin, recording the real operator in the elevation audit trail. Requires the ' +
-            'RETIRADAS_WRITE scope + companyId in the token allowlist. Only apply edits you have confirmed.',
+            'elevation, and if you are not elevated it asks you to do so in the web, then applies each ' +
+            'confirmed edit through the framework (hooks + audit fire) as the elevated _sysadmin, ' +
+            'recording the real operator in the elevation audit trail. The company is DERIVED from your ' +
+            'elevation (no companyId parameter). Only apply edits you have confirmed.',
         {
-            companyId: z.number().describe('The company (tenant) id you are elevated into, e.g. 9'),
             edits: z.array(EditSchema).describe('The confirmed edits (from propose_completion), one per removal'),
         },
-        async ({ companyId, edits }) => {
-            // Step 1: check the operator's current elevation (opened in the web with step-up).
-            const elev = await client.get<CurrentElevation>('/mwm/retirada/operator/current-elevation')
-            if (!elev.elevated) {
-                return { content: [{ type: 'text' as const, text:
-                    `No estás elevado a ningún tenant. Elévate a la company ${companyId} desde el portal web ` +
-                    `(IAM → elevar), y luego vuelve a lanzar apply_completion.` }] }
-            }
-            if (elev.companyId !== companyId) {
-                return { content: [{ type: 'text' as const, text:
-                    `Estás elevado a la company ${elev.companyId}, no a la ${companyId}. Des-elévate y eleva a ` +
-                    `la ${companyId} desde el portal web, luego vuelve a lanzar apply_completion.` }] }
-            }
+        async ({ edits }) => {
+            // Step 1: check the operator's current elevation (opened in the web with step-up). The
+            // company is whatever you elevated into — it is never passed by the tool.
+            const elev = await resolveElevation(client)
+            if ('content' in elev) return elev
+            const companyId = elev.companyId
 
-            // Step 2: apply under the active elevation. The backend re-verifies eligibility + the live OPEN.
+            // Step 2: apply under the active elevation. The backend derives the company from the live
+            // OPEN row and re-verifies eligibility — the companyId is NOT sent (server is the authority).
             const result = await client.post<ApplyResult>(
                 '/mwm/retirada/apply-elevated',
-                { companyId, confirm: true, edits }
+                { confirm: true, edits }
             )
 
             const ok = result.applied.length

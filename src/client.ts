@@ -46,7 +46,7 @@ export class ZincAppClient {
                 'Authorization': `Bearer ${this.token}`,
                 'Accept': 'application/json',
                 'Content-Type': 'application/json',
-                // e.g. the X-Agent-Apply-Token carrying the batch-bound, single-use human-apply token.
+                // Optional per-call headers (currently unused; kept for forward compatibility).
                 ...(extraHeaders ?? {}),
             },
             body: body ? JSON.stringify(body) : undefined,

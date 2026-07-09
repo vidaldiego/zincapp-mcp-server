@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { ZincAppClient } from '../client.js'
+import { resolveElevation } from './elevation.js'
 
 interface AuditFinding {
     dimension: string
@@ -23,17 +24,16 @@ export function registerGetRetiradaAudit(server: McpServer, client: ZincAppClien
         'Audit ONE waste removal (retirada) across every dimension: transporter (+ its T01/T02 ' +
             'authorization), NT, declared vs weighed kg, residue (LER), R/D operation codes, gestor ' +
             'NIMA/authorization/address, and attached documents. Each check reports ok / missing / ' +
-            'mismatch plus the field that proves it. Read-only, no AI. The token must hold RETIRADAS_AUDIT ' +
-            'and list the companyId.',
+            'mismatch plus the field that proves it. Read-only, no AI. Runs under YOUR active operator ' +
+            'elevation — the company is the one you elevated into from the web (no companyId parameter).',
         {
-            companyId: z.number().describe('The company (tenant) id, e.g. 9'),
             removalId: z.number().describe('The removal id to audit'),
         },
-        async ({ companyId, removalId }) => {
-            const a = await client.get<RemovalAudit>(
-                `/mwm/retirada/audit/${removalId}`,
-                { companyId: String(companyId) }
-            )
+        async ({ removalId }) => {
+            const elev = await resolveElevation(client)
+            if ('content' in elev) return elev
+
+            const a = await client.get<RemovalAudit>(`/mwm/retirada/audit/${removalId}`)
 
             const icon = (s: string) => (s === 'ok' ? '✅' : s === 'mismatch' ? '⚠️' : '❌')
             const lines = a.findings.map(f => {

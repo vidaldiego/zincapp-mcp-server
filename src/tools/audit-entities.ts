@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { ZincAppClient } from '../client.js'
+import { resolveElevation } from './elevation.js'
 
 interface EntityAudit {
     role: string
@@ -28,15 +29,19 @@ export function registerAuditEntities(server: McpServer, client: ZincAppClient) 
         'Audit the gestores or transportistas used by a company\'s waste removals. For each distinct ' +
             'party it checks: authorization (T01/T02 by hazard for transporters; destino+hazard role ' +
             'flags for gestores), NIMA validity (exactly 10 digits), and address plausibility. Returns ' +
-            'one row per party, ranked by how many removals use it. Read-only, no AI. Requires the ' +
-            'RETIRADAS_AUDIT scope + the companyId in the allowlist.',
+            'one row per party, ranked by how many removals use it. Read-only, no AI. Runs under YOUR ' +
+            'active operator elevation — the company is the one you elevated into from the web (no ' +
+            'companyId parameter).',
         {
-            companyId: z.number().describe('The company (tenant) id, e.g. 9'),
             role: z.enum(['gestor', 'transportista']).describe('Which party role to audit'),
             year: z.number().optional().describe('Restrict to removals of this year (optional)'),
         },
-        async ({ companyId, role, year }) => {
-            const params: Record<string, string> = { companyId: String(companyId), role }
+        async ({ role, year }) => {
+            const elev = await resolveElevation(client)
+            if ('content' in elev) return elev
+            const companyId = elev.companyId
+
+            const params: Record<string, string> = { role }
             if (year != null) params.year = String(year)
             const r = await client.get<EntityAuditResult>('/mwm/retirada/audit-entities', params)
 

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { ZincAppClient } from '../client.js'
+import { resolveElevation } from './elevation.js'
 
 interface AuthCandidate {
     authId: string
@@ -36,14 +37,18 @@ export function registerProposeAuthorizations(server: McpServer, client: ZincApp
             'required authorization, suggest the static authorization TYPE codes (authId) that would ' +
             'satisfy it — T01/T02 by hazard for transporters, destino+hazard role flags for gestores. ' +
             'Read-only, never writes. A human still creates the authorization and supplies the real ' +
-            'registry number; the agent only proposes the type. Requires the RETIRADAS_AUDIT scope.',
+            'registry number; the agent only proposes the type. Runs under YOUR active operator elevation ' +
+            '— the company is the one you elevated into from the web (no companyId parameter).',
         {
-            companyId: z.number().describe('The company (tenant) id, e.g. 9'),
             role: z.enum(['gestor', 'transportista']).describe('Which party role to propose for'),
             year: z.number().optional().describe('Restrict to removals of this year (optional)'),
         },
-        async ({ companyId, role, year }) => {
-            const params: Record<string, string> = { companyId: String(companyId), role }
+        async ({ role, year }) => {
+            const elev = await resolveElevation(client)
+            if ('content' in elev) return elev
+            const companyId = elev.companyId
+
+            const params: Record<string, string> = { role }
             if (year != null) params.year = String(year)
             const r = await client.get<AuthProposalResult>('/mwm/retirada/propose-authorizations', params)
 

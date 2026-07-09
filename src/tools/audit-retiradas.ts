@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { ZincAppClient } from '../client.js'
+import { resolveElevation } from './elevation.js'
 
 interface AuditStats {
     year: number
@@ -42,14 +43,18 @@ export function registerAuditRetiradas(server: McpServer, client: ZincAppClient)
         'Audit a company\'s waste removals (retiradas) for a year. Returns a health projection — how ' +
             'many removals are missing an NT, a transporter, documents, a residue, how many have a kg ' +
             'mismatch or exceed NT capacity — plus a ranked list of the worst offenders. Read-only, no AI. ' +
-            'The token must hold the RETIRADAS_AUDIT scope and list the companyId in its allowlist.',
+            'Runs under YOUR active operator elevation: the company is the one you elevated into from the ' +
+            'web (no companyId parameter). If you are not elevated, it asks you to elevate first.',
         {
-            companyId: z.number().describe('The company (tenant) id to audit, e.g. 9 for La Paz'),
             year: z.number().describe('Calendar year, e.g. 2025'),
             limit: z.number().optional().describe('Max ranked removals to return (default 20, max 100)'),
         },
-        async ({ companyId, year, limit }) => {
-            const params: Record<string, string> = { companyId: String(companyId), year: String(year) }
+        async ({ year, limit }) => {
+            const elev = await resolveElevation(client)
+            if ('content' in elev) return elev
+            const companyId = elev.companyId
+
+            const params: Record<string, string> = { year: String(year) }
             if (limit != null) params.limit = String(limit)
             const r = await client.get<AuditResponse>('/mwm/retirada/audit', params)
 
