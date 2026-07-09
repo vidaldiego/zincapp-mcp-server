@@ -186,14 +186,23 @@ export async function lookupNimaAuthorizations(
             { nif, posicionActual: String(page * PAGE_SIZE) })
         const parsed = parseCenterList(html)
         // De-dup guard: a bad/repeated offset should never duplicate a center already collected.
+        const beforeCount = centers.length
         for (const c of parsed.centros) {
             if (seenIdCentro.has(c.idCentro)) continue
             seenIdCentro.add(c.idCentro)
             centers.push(c)
         }
         const total = Number(html.match(/Número total de registros:\s*(\d+)/)?.[1] ?? centers.length)
-        if (args.nima && centers.some(c => c.nima === args.nima)) break
-        if (centers.length >= total) break
+        const nimaFound = args.nima ? centers.some(c => c.nima === args.nima) : false
+        // Finding 2: a page that adds zero new centers means we're no longer making progress
+        // (e.g. the server ignores posicionActual and re-serves the same rows) — stop instead of
+        // burning the remaining page budget on repeats.
+        if (centers.length === beforeCount) break
+        if (args.nima && nimaFound) break
+        // Finding 1: a small/wrong `total` must never cut off a search that is still looking for
+        // an unfound target nima — only let `>= total` end the loop when we're gathering ALL
+        // centers (no nima filter) or the requested nima has already been found.
+        if (!args.nima && centers.length >= total) break
     }
 
     if (centers.length === 0) throw new Error(`Sin centros en el registro NIMA para NIF ${nif}`)

@@ -107,6 +107,55 @@ test('lookupNimaAuthorizations paginates with posicionActual to pull the 11th ce
     )
 })
 
+test('lookupNimaAuthorizations breaks on a page that adds no new centers (Finding 2)', async () => {
+    // Fake server ignores posicionActual entirely and always re-serves page 1's 10 centers,
+    // while claiming total=11 (one more than it will ever actually deliver). Without the
+    // no-progress break, the loop would burn all 10 page iterations before giving up; with the
+    // fix, it should stop right after the 2nd search page adds nothing new.
+    let searchCalls = 0
+    const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+        const url = String(input)
+        if (url.includes('FichaNimaAccion')) {
+            return latin1Response(fichaHtml)
+        }
+        searchCalls++
+        return latin1Response(searchHtml)
+    }) as unknown as typeof fetch
+
+    const res = await lookupNimaAuthorizations({ nif: 'B86208824' }, fetchImpl)
+
+    assert.equal(res.entidad.centros.length, 10, `expected 10 centros, got ${res.entidad.centros.length}`)
+    assert.ok(searchCalls <= 2, `expected the no-progress break to fire by the 2nd search POST, got ${searchCalls} calls`)
+})
+
+test('lookupNimaAuthorizations keeps paging past a small/wrong total while a nima is still unfound (Finding 1)', async () => {
+    // Page 1 under-reports "Número total de registros: 1" (a mis-parsed/drifted footer), even
+    // though the requested nima (2810000011) only appears on page 2 (posicionActual=10, the
+    // existing page-2 fixture). Without the fix, `centers.length >= total` (10 >= 1) would end
+    // the loop after page 1 and the lookup would wrongly throw "not found".
+    const searchHtmlPage1SmallTotal = searchHtml.replace(
+        /Número total de registros:\s*11/,
+        'Número total de registros: 1',
+    )
+    assert.notEqual(searchHtmlPage1SmallTotal, searchHtml, 'fixture replace did not match — check the footer text')
+
+    const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+        const url = String(input)
+        if (url.includes('FichaNimaAccion')) {
+            return latin1Response(fichaHtml)
+        }
+        const body = String(init?.body ?? '')
+        const posicionActual = Number(new URLSearchParams(body).get('posicionActual') ?? '0')
+        const html = posicionActual >= 10 ? searchHtmlPage2 : searchHtmlPage1SmallTotal
+        return latin1Response(html)
+    }) as unknown as typeof fetch
+
+    const res = await lookupNimaAuthorizations({ nif: 'B86208824', nima: 2810000011 }, fetchImpl)
+
+    assert.equal(res.entidad.centros.length, 1, `expected 1 centro, got ${res.entidad.centros.length}`)
+    assert.equal(res.entidad.centros[0].nima, 2810000011)
+})
+
 test('cmPost decodes the CM response as ISO-8859-1, not UTF-8', async () => {
     // The CM serves Content-Type: text/html; charset=ISO-8859-1 even though the in-page <meta>
     // lies and claims UTF-8. Feed raw Latin-1 bytes for a `Razón Social:` line (0xf3 = 'ó' in
