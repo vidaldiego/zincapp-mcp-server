@@ -19,6 +19,8 @@ interface AuthProposal {
     role: string
     cif: string | null
     nombre: string | null
+    clientId: number | null
+    centerId: number | null
     usedByRemovals: number
     peligroso: boolean
     candidates: AuthCandidate[]
@@ -58,11 +60,14 @@ export function registerProposeAuthorizations(server: McpServer, client: ZincApp
 
             const blocks = r.proposals.map(p => {
                 const name = p.nombre ?? p.cif ?? '(sin nombre)'
+                const coords = (p.clientId != null && p.centerId != null)
+                    ? `  · entidad **${p.clientId}/${p.centerId}** (para apply_authorization)`
+                    : '  · _(sin centro resoluble — no aplicable directamente)_'
                 const cands = p.candidates.length
                     ? p.candidates.map(c => `  - \`${c.authId}\`${c.name ? ` — ${c.name}` : ''}`).join('\n')
                     : '  _(sin candidatos en el catálogo)_'
                 const warns = p.warnings.map(w => `  ⚠️ ${w}`).join('\n')
-                return `### ${name} — ${p.usedByRemovals} retirada(s)${p.peligroso ? ' · peligroso' : ''}\nCandidatos (authId):\n${cands}\n${warns}`
+                return `### ${name} — ${p.usedByRemovals} retirada(s)${p.peligroso ? ' · peligroso' : ''}${coords}\nCandidatos (authId):\n${cands}\n${warns}`
             }).join('\n\n')
 
             const text = `# Propuesta de autorizaciones · ${r.role}s · company ${companyId}\n${r.proposals.length} sin autorización\n\n${blocks}`
