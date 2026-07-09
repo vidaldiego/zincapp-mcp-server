@@ -45,3 +45,66 @@ export function parseCenterList(html: string): { razonSocial: string | null; cen
 
     return { razonSocial: null, centros }
 }
+
+export interface NimaAuthorization {
+    authId: string
+    autorizacion: string
+    estado: boolean
+}
+
+/** Collapse an HTML fragment to plain text (strip tags, decode &nbsp;, squash whitespace). */
+function pText(s: string): string {
+    return s.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * Parse the FichaNimaAccion.icm detail into the razón social, the center NIMA, and its
+ * authorizations (verified against test/fixtures/cm-ficha-consenur-90181.html).
+ *
+ * Razón Social and NIMA come from the "Sede"/"Centro" fieldsets:
+ *   - `<b>Razón Social:</b> CONSENUR SANITARIOS, S.L.</td>` — plain text between the label and the cell close.
+ *   - `var nima = '2800006779';` — a JS literal inside the NIMA cell (the surrounding
+ *     `document.write(nima)` is a UI-only rendering detail we ignore, same as parseCenterList).
+ *
+ * The "Autorizaciones" table rows are `Tipo | Nº | Estado | …4 date cells… | Consultar button`,
+ * one row per authorization type held by the center. The real markup has malformed nested
+ * `<tr>`s (`<tr>\n<tr bgcolor="...">`) which we don't need to care about since we match on
+ * `<td>`/`<p>` boundaries rather than row boundaries. We map:
+ *   authId = code before ' - ' in the Tipo cell, uppercased ('G01 - Centro Gestor…' -> 'G01')
+ *   autorizacion = the Nº Autorización cell's text
+ *   estado = true iff the Estado cell's text is exactly 'Autorizado/Registrado' (else e.g. 'Baja' -> false)
+ * We scope the match to the text after the "Autorizaciones" heading so unrelated <p>s
+ * elsewhere in the page can't be mistaken for a row.
+ */
+export function parseAuthorizations(html: string): {
+    razonSocial: string | null
+    nima: number | null
+    autorizaciones: NimaAuthorization[]
+} {
+    const rs = html.match(/Razón Social:<\/b>\s*([^<]+?)\s*<\/td>/)
+    const razonSocial = rs ? rs[1].trim() : null
+
+    const nm = html.match(/var nima\s*=\s*'(\d+)'/)
+    const nima = nm ? Number(nm[1]) : null
+
+    const fsStart = html.indexOf('Autorizaciones')
+    const scope = fsStart >= 0 ? html.slice(fsStart) : html
+
+    const autorizaciones: NimaAuthorization[] = []
+    // Tipo cell's "<code> - <desc>" <p>, then the next two <td> cells (Nº, Estado) in document order.
+    const rowRe = /<p>\s*([A-Z]\d{2})\s*-[^<]*<\/p>[\s\S]*?<td[^>]*>\s*([\s\S]*?)<\/td>\s*<td[^>]*>\s*([\s\S]*?)<\/td>/g
+    let m: RegExpExecArray | null
+    while ((m = rowRe.exec(scope)) !== null) {
+        const authId = m[1].toUpperCase()
+        const numero = pText(m[2])
+        const estadoText = pText(m[3])
+        if (!numero) continue
+        autorizaciones.push({
+            authId,
+            autorizacion: numero,
+            estado: estadoText === 'Autorizado/Registrado',
+        })
+    }
+
+    return { razonSocial, nima, autorizaciones }
+}
