@@ -131,6 +131,14 @@ function form(fields: Record<string, string>): string {
     }).toString()
 }
 
+/**
+ * The CM serves `Content-Type: text/html; charset=ISO-8859-1` (Latin-1) — the `<meta>` tag
+ * inside the HTML claims UTF-8, but the HTTP header is authoritative and the actual bytes are
+ * Latin-1 (e.g. `Razón` is `52 61 7a f3 6e`, where `0xf3` is `ó` in Latin-1, not UTF-8). Decoding
+ * with `res.text()` (UTF-8) mangles accented characters (`RÍO` -> `R�O`) and breaks the
+ * razonSocial regex entirely (`Razón Social` -> `Raz�n Social`, never matches -> null nombre).
+ * We always decode as Latin-1 regardless of what the response claims.
+ */
 async function cmPost(fetchImpl: typeof fetch, action: string, fields: Record<string, string>): Promise<string> {
     const res = await fetchImpl(`${CM_BASE}/${action}`, {
         method: 'POST',
@@ -138,7 +146,8 @@ async function cmPost(fetchImpl: typeof fetch, action: string, fields: Record<st
         body: form(fields),
     })
     if (!res.ok) throw new Error(`CM service error ${res.status} on ${action}`)
-    return res.text()
+    const buf = await res.arrayBuffer()
+    return new TextDecoder('iso-8859-1').decode(buf)
 }
 
 /**
@@ -162,13 +171,26 @@ export async function lookupNimaAuthorizations(
     // 1. Search by NIF, paginating through result pages. The CM shows "Número total de
     //    registros: N" in the response; we page while more rows remain and (if a target NIMA was
     //    requested) we haven't found it yet. Capped defensively at 10 pages.
+    //
+    //    Pagination mechanism: live testing against the real CM proved `accion_paginacion` (page
+    //    number / 'Siguiente') does NOTHING — it returns page 1's same rows regardless of value.
+    //    The real mechanism is the `posicionActual` OFFSET: posicionActual=0 -> rows 1..10,
+    //    posicionActual=10 -> row 11, etc. So we advance posicionActual by the page size (10)
+    //    each iteration and drop accion_paginacion entirely.
+    const PAGE_SIZE = 10
     const centers: NimaCenterRef[] = []
+    const seenIdCentro = new Set<number>()
     let page = 0
     for (; page < 10; page++) {
         const html = await cmPost(fetchImpl, 'ConsultaNimaAccion.icm',
-            page === 0 ? { nif } : { nif, accion_paginacion: String(page + 1) })
+            { nif, posicionActual: String(page * PAGE_SIZE) })
         const parsed = parseCenterList(html)
-        centers.push(...parsed.centros)
+        // De-dup guard: a bad/repeated offset should never duplicate a center already collected.
+        for (const c of parsed.centros) {
+            if (seenIdCentro.has(c.idCentro)) continue
+            seenIdCentro.add(c.idCentro)
+            centers.push(c)
+        }
         const total = Number(html.match(/Número total de registros:\s*(\d+)/)?.[1] ?? centers.length)
         if (args.nima && centers.some(c => c.nima === args.nima)) break
         if (centers.length >= total) break
