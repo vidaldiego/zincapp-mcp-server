@@ -15,6 +15,7 @@ import { registerAuditEntities } from './audit-entities.js'
 import { registerApplyCompletion } from './apply-completion.js'
 import { registerProposeAuthorizations } from './propose-authorizations.js'
 import { registerApplyAuthorization } from './apply-authorization.js'
+import { registerLinkGestorAuthorizations } from './link-gestor-authorizations.js'
 import { registerProposeNt } from './propose-nt.js'
 import { registerLookupAuthorization } from './lookup-authorization.js'
 
@@ -34,6 +35,7 @@ export function registerAllTools(server: McpServer, client: ZincAppClient) {
     registerApplyCompletion(server, client)
     registerProposeAuthorizations(server, client)
     registerApplyAuthorization(server, client)
+    registerLinkGestorAuthorizations(server, client)
     registerProposeNt(server, client)
     registerLookupAuthorization(server, client)
 }
