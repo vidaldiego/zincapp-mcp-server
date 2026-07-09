@@ -8,6 +8,7 @@ import { registerGetEndpoint } from './get-endpoint.js'
 import { registerSandboxRequest } from './sandbox-request.js'
 import { registerGetContract } from './get-contract.js'
 import { registerAuditRetiradas } from './audit-retiradas.js'
+import { registerListRetiradas } from './list-retiradas.js'
 import { registerGetRetiradaAudit } from './get-retirada-audit.js'
 import { registerProposeCompletion } from './propose-completion.js'
 import { registerAuditEntities } from './audit-entities.js'
@@ -24,6 +25,7 @@ export function registerAllTools(server: McpServer, client: ZincAppClient) {
     registerSandboxRequest(server, client)
     registerGetContract(server, client)
     registerAuditRetiradas(server, client)
+    registerListRetiradas(server, client)
     registerGetRetiradaAudit(server, client)
     registerProposeCompletion(server, client)
     registerAuditEntities(server, client)
