@@ -108,3 +108,91 @@ export function parseAuthorizations(html: string): {
 
     return { razonSocial, nima, autorizaciones }
 }
+
+const CM_BASE = 'https://gestiona.comunidad.madrid/pcea_nima_web/html/web'
+
+export interface NimaCenter {
+    nima: number
+    direccion: string
+    autorizaciones: NimaAuthorization[]
+}
+export interface NimaEntity {
+    cif: string
+    nombre: string | null
+    centros: NimaCenter[]
+}
+export interface NimaLookupResult { entidad: NimaEntity }
+
+function form(fields: Record<string, string>): string {
+    return new URLSearchParams({
+        posicionActual: '0', idCentro: '', tipoCentro: '', nif: '', nima: '', denominacion: '',
+        autorizacion: '', cdProvincia: '', dsProvincia: '', cdMunicipio: '', dsMunicipio: '',
+        ...fields,
+    }).toString()
+}
+
+async function cmPost(fetchImpl: typeof fetch, action: string, fields: Record<string, string>): Promise<string> {
+    const res = await fetchImpl(`${CM_BASE}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: form(fields),
+    })
+    if (!res.ok) throw new Error(`CM service error ${res.status} on ${action}`)
+    return res.text()
+}
+
+/**
+ * Orchestrate a NIMA registry lookup: search the CM by NIF (paginating through the result
+ * pages), then fetch the ficha for each target center and assemble the nested
+ * `Entidad -> centros -> autorizaciones` graph.
+ *
+ * When `args.nima` is given, we page only until that NIMA is found among the search results
+ * (or we run out of pages), then fetch just that one center's ficha. Without `args.nima`, every
+ * center found across all pages is fetched.
+ *
+ * `fetchImpl` is injectable so tests never hit the network; it defaults to the global `fetch`.
+ */
+export async function lookupNimaAuthorizations(
+    args: { nif: string; nima?: number },
+    fetchImpl: typeof fetch = fetch,
+): Promise<NimaLookupResult> {
+    const nif = args.nif.trim().toUpperCase()
+    if (!nif) throw new Error('nif is required')
+
+    // 1. Search by NIF, paginating through result pages. The CM shows "Número total de
+    //    registros: N" in the response; we page while more rows remain and (if a target NIMA was
+    //    requested) we haven't found it yet. Capped defensively at 10 pages.
+    const centers: NimaCenterRef[] = []
+    let page = 0
+    for (; page < 10; page++) {
+        const html = await cmPost(fetchImpl, 'ConsultaNimaAccion.icm',
+            page === 0 ? { nif } : { nif, accion_paginacion: String(page + 1) })
+        const parsed = parseCenterList(html)
+        centers.push(...parsed.centros)
+        const total = Number(html.match(/Número total de registros:\s*(\d+)/)?.[1] ?? centers.length)
+        if (args.nima && centers.some(c => c.nima === args.nima)) break
+        if (centers.length >= total) break
+    }
+
+    if (centers.length === 0) throw new Error(`Sin centros en el registro NIMA para NIF ${nif}`)
+
+    const targets = args.nima
+        ? centers.filter(c => c.nima === args.nima)
+        : centers
+    if (args.nima && targets.length === 0) {
+        throw new Error(`NIMA ${args.nima} no está entre los centros del NIF ${nif}`)
+    }
+
+    // 2. Fetch each target center's ficha and assemble the nested graph.
+    const out: NimaCenter[] = []
+    let razonSocial: string | null = null
+    for (const c of targets) {
+        const ficha = await cmPost(fetchImpl, 'FichaNimaAccion.icm',
+            { idCentro: String(c.idCentro), tipoCentro: c.tipoCentro, nif })
+        const parsed = parseAuthorizations(ficha)
+        if (parsed.razonSocial) razonSocial = parsed.razonSocial
+        out.push({ nima: c.nima, direccion: c.direccion, autorizaciones: parsed.autorizaciones })
+    }
+
+    return { entidad: { cif: nif, nombre: razonSocial, centros: out } }
+}
