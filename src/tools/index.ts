@@ -19,6 +19,7 @@ import { registerLinkGestorAuthorizations } from './link-gestor-authorizations.j
 import { registerProposeNt } from './propose-nt.js'
 import { registerLookupAuthorization } from './lookup-authorization.js'
 import { registerNtFinalGestor } from './nt-final-gestor.js'
+import { registerUpsertGestor } from './upsert-gestor.js'
 
 export function registerAllTools(server: McpServer, client: ZincAppClient) {
     registerSearchDocs(server, client)
@@ -40,4 +41,5 @@ export function registerAllTools(server: McpServer, client: ZincAppClient) {
     registerProposeNt(server, client)
     registerLookupAuthorization(server, client)
     registerNtFinalGestor(server, client)
+    registerUpsertGestor(server, client)
 }
