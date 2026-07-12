@@ -109,15 +109,17 @@ export function registerNtFinalGestor(server: McpServer, client: ZincAppClient) 
                     `Terna actual en la NT: ${fmtTriple(p.ternaActual)}. No se ha persistido nada.`,
                 )
             }
+            const cadena = p.cadena ?? []
+            const avisos = p.avisosE3l ?? []
             const text =
                 `# Propuesta · NT ${p.ntNumero}\n\n` +
                 `- **proposalId:** \`${p.proposalId}\`\n` +
                 `- **Nº de NT en el documento:** ${p.ntNumeroDocumento ?? '—'}\n` +
                 `- **Terna actual en la NT:** ${fmtTriple(p.ternaActual)}\n\n` +
-                `**Cadena de gestores finales propuesta (${p.cadena.length} eslabón/es):**\n` +
-                `${formatChain(p.cadena)}\n\n` +
+                `**Cadena de gestores finales propuesta (${cadena.length} eslabón/es):**\n` +
+                `${formatChain(cadena)}\n\n` +
                 `El **último eslabón** es el que verá el libro de registro.` +
-                formatWarnings(p.avisosE3l) +
+                formatWarnings(avisos) +
                 `\n\nSi es correcto, aplica con \`apply_nt_final_gestor({ proposalId: "${p.proposalId}" })\`. ` +
                 `La propuesta caduca (TTL) — aplícala pronto.`
             return { content: [{ type: 'text' as const, text }] }
@@ -150,8 +152,8 @@ export function registerNtFinalGestor(server: McpServer, client: ZincAppClient) 
                 `${titulo}\n\n` +
                 `- **Resultado:** ${r.outcome}\n` +
                 `- **Último eslabón (terna del libro):** ${fmtTriple(r.gestorFinal)}\n\n` +
-                `**Cadena escrita:**\n${formatChain(r.cadena)}` +
-                formatWarnings(r.avisos) +
+                `**Cadena escrita:**\n${formatChain(r.cadena ?? [])}` +
+                formatWarnings(r.avisos ?? []) +
                 `\n\n_Recuerda des-elevarte desde el portal web con un motivo cuando termines._`
             return { content: [{ type: 'text' as const, text }] }
         },

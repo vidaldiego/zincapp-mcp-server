@@ -52,3 +52,15 @@ test('formatWarnings lista los avisos E3L y aclara que NO bloquean', () => {
 test('formatWarnings sin avisos devuelve cadena vacía (no ensucia el markdown)', () => {
     assert.equal(formatWarnings([]), '')
 })
+
+test('render defensivo: respuesta sin cadena/avisosE3l (backend viejo) no lanza', () => {
+    // Durante la ventana de dos fases el MCP nuevo puede pegar contra un backend
+    // cuya respuesta aún no trae cadena/avisosE3l → deben rendir "sin cadena" / "" sin excepción.
+    const respuesta: Record<string, unknown> = { proposalId: 'p1', ntNumero: 'NT1' }
+    const cadena = (respuesta.cadena as Parameters<typeof formatChain>[0] | undefined) ?? []
+    const avisos = (respuesta.avisosE3l as Parameters<typeof formatWarnings>[0] | undefined) ?? []
+    assert.doesNotThrow(() => formatChain(cadena))
+    assert.doesNotThrow(() => formatWarnings(avisos))
+    assert.match(formatChain(cadena), /sin cadena|vacía/i)
+    assert.equal(formatWarnings(avisos), '')
+})
