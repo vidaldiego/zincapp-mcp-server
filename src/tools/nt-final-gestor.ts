@@ -47,11 +47,19 @@ function resolvePdfBase64(
     return { ok: true, base64: bytes.toString('base64') }
 }
 
+interface LinkDto {
+    orden: number
+    clientId: number
+    centerId: number
+    operacion: string
+}
+
 interface ProposalDto {
     proposalId: string
     ntNumero: string
     ntNumeroDocumento: string | null
-    gestorFinal: { clientId: number | null; centerId: number | null; operacion: string | null } | null
+    cadena: LinkDto[]
+    avisosE3l: string[]
     ternaActual: { clientId: number | null; centerId: number | null; operacion: string | null } | null
     resoluble: boolean
     razon: string | null
@@ -60,7 +68,9 @@ interface ProposalDto {
 interface ApplyResult {
     outcome: string
     ntNumero: string
+    cadena: LinkDto[]
     gestorFinal: { clientId: number | null; centerId: number | null; operacion: string | null } | null
+    avisos: string[]
 }
 
 const errorContent = (text: string) => ({ content: [{ type: 'text' as const, text }] })
@@ -68,10 +78,11 @@ const errorContent = (text: string) => ({ content: [{ type: 'text' as const, tex
 export function registerNtFinalGestor(server: McpServer, client: ZincAppClient) {
     server.tool(
         'preview_nt_final_gestor',
-        'DRY-RUN: extrae por IA el "Gestor final para la operación Dxx" del PDF de una Notificación Previa ' +
-            '(NT), lo resuelve contra las entidades/centros de tu tenant, valida las invariantes E3L ' +
-            '(operación en Table2Type + autorización por LER del centro), y devuelve una PROPUESTA opaca ' +
-            '(con proposalId) SIN escribir nada. Aporta el PDF con pdfPath (ruta local) o pdfBase64 ' +
+        'DRY-RUN: extrae por IA la CADENA COMPLETA de gestores finales (hasta 3 eslabones, p.ej. ' +
+            'D15→D13→D9), la resuelve contra las entidades/centros de tu tenant (fail-closed sólo por ' +
+            'IDENTIDAD: el gestor debe estar dado de alta — si no, usa upsert_entidad/upsert_centro), avisa ' +
+            '(sin bloquear) de lo que le falte a cada centro para exportar E3L, y devuelve una PROPUESTA ' +
+            'opaca (con proposalId) SIN escribir nada. Aporta el PDF con pdfPath (ruta local) o pdfBase64 ' +
             '(exactamente uno). Revisa la propuesta y, si es correcta, aplícala con apply_nt_final_gestor. ' +
             'Corre bajo tu elevación de operador (company derivada de ella).',
         {
@@ -102,9 +113,12 @@ export function registerNtFinalGestor(server: McpServer, client: ZincAppClient) 
                 `# Propuesta · NT ${p.ntNumero}\n\n` +
                 `- **proposalId:** \`${p.proposalId}\`\n` +
                 `- **Nº de NT en el documento:** ${p.ntNumeroDocumento ?? '—'}\n` +
-                `- **Gestor final propuesto:** ${fmtTriple(p.gestorFinal)}\n` +
                 `- **Terna actual en la NT:** ${fmtTriple(p.ternaActual)}\n\n` +
-                `Si es correcto, aplica con \`apply_nt_final_gestor({ proposalId: "${p.proposalId}" })\`. ` +
+                `**Cadena de gestores finales propuesta (${p.cadena.length} eslabón/es):**\n` +
+                `${formatChain(p.cadena)}\n\n` +
+                `El **último eslabón** es el que verá el libro de registro.` +
+                formatWarnings(p.avisosE3l) +
+                `\n\nSi es correcto, aplica con \`apply_nt_final_gestor({ proposalId: "${p.proposalId}" })\`. ` +
                 `La propuesta caduca (TTL) — aplícala pronto.`
             return { content: [{ type: 'text' as const, text }] }
         },
@@ -113,10 +127,11 @@ export function registerNtFinalGestor(server: McpServer, client: ZincAppClient) 
     server.tool(
         'apply_nt_final_gestor',
         'Aplica una propuesta de gestor final previamente revisada (por proposalId de preview_nt_final_gestor). ' +
-            'NO re-ejecuta la IA ni re-transporta el PDF. Escribe la terna (clientId, centerId, operación) en ' +
-            'la NT bajo tu elevación de operador, por el framework (hooks + auditoría), con regla ' +
-            'complete-what\'s-missing (si la NT ya tiene un gestor final distinto → conflicto, no se ' +
-            'sobrescribe). Sólo aplica propuestas que hayas verificado.',
+            'NO re-ejecuta la IA ni re-transporta el PDF. Escribe la CADENA (orden 1..N) en la NT, crea los ' +
+            'LER que falten en los centros de la cadena, y deriva la terna del último eslabón, bajo tu ' +
+            'elevación de operador, por el framework (hooks + auditoría), con regla complete-what\'s-missing ' +
+            '(si la NT ya tiene un gestor final distinto → conflicto, no se sobrescribe). Sólo aplica ' +
+            'propuestas que hayas verificado.',
         {
             proposalId: z.string().describe('El proposalId devuelto por preview_nt_final_gestor'),
         },
@@ -134,8 +149,10 @@ export function registerNtFinalGestor(server: McpServer, client: ZincAppClient) 
             const text =
                 `${titulo}\n\n` +
                 `- **Resultado:** ${r.outcome}\n` +
-                `- **Gestor final:** ${fmtTriple(r.gestorFinal)}\n\n` +
-                `_Recuerda des-elevarte desde el portal web con un motivo cuando termines._`
+                `- **Último eslabón (terna del libro):** ${fmtTriple(r.gestorFinal)}\n\n` +
+                `**Cadena escrita:**\n${formatChain(r.cadena)}` +
+                formatWarnings(r.avisos) +
+                `\n\n_Recuerda des-elevarte desde el portal web con un motivo cuando termines._`
             return { content: [{ type: 'text' as const, text }] }
         },
     )
@@ -144,4 +161,22 @@ export function registerNtFinalGestor(server: McpServer, client: ZincAppClient) 
 function fmtTriple(t: { clientId: number | null; centerId: number | null; operacion: string | null } | null): string {
     if (!t || (t.clientId == null && t.centerId == null && t.operacion == null)) return '(vacía)'
     return `entidad ${t.clientId ?? '—'} / centro ${t.centerId ?? '—'} · operación ${t.operacion ?? '—'}`
+}
+
+/** Una línea por eslabón, en orden documental. Puro y exportado para test. */
+export function formatChain(cadena: LinkDto[]): string {
+    if (cadena.length === 0) return '_(sin cadena de gestores finales)_'
+    return cadena
+        .map((l) => `${l.orden}. entidad ${l.clientId} / centro ${l.centerId} · operación **${l.operacion}**`)
+        .join('\n')
+}
+
+/** Los defectos de forma que E3L reportará al emitir. NO bloquean el vínculo. Puro y exportado para test. */
+export function formatWarnings(avisos: string[]): string {
+    if (avisos.length === 0) return ''
+    return (
+        `\n\n**Avisos E3L (no bloquean el vínculo):**\n` +
+        avisos.map((a) => `- ${a}`).join('\n') +
+        `\n\n_Se vincula igualmente (best-effort). E3L reportará estos defectos al emitir el DCS._`
+    )
 }
