@@ -1,6 +1,6 @@
 {
   "name": "@zincapp/mcp-server",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "MCP server for ZincApp — search docs, read API reference, execute sandbox calls, and audit/complete waste removals (retiradas)",
   "type": "module",
   "bin": {
