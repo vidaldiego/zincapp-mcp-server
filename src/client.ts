@@ -39,9 +39,22 @@ export class ZincAppClient {
     }
 
     async post<T>(path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
+        return this.send<T>('POST', path, body, extraHeaders)
+    }
+
+    async put<T>(path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
+        return this.send<T>('PUT', path, body, extraHeaders)
+    }
+
+    private async send<T>(
+        method: 'POST' | 'PUT',
+        path: string,
+        body?: unknown,
+        extraHeaders?: Record<string, string>,
+    ): Promise<T> {
         const url = `${this.baseUrl}/agent/v1${path}`
         const res = await fetch(url, {
-            method: 'POST',
+            method,
             headers: {
                 'Authorization': `Bearer ${this.token}`,
                 'Accept': 'application/json',

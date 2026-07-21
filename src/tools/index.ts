@@ -20,6 +20,7 @@ import { registerProposeNt } from './propose-nt.js'
 import { registerLookupAuthorization } from './lookup-authorization.js'
 import { registerNtFinalGestor } from './nt-final-gestor.js'
 import { registerUpsertGestor } from './upsert-gestor.js'
+import { registerPrintables } from './printables.js'
 
 export function registerAllTools(server: McpServer, client: ZincAppClient) {
     registerSearchDocs(server, client)
@@ -42,4 +43,5 @@ export function registerAllTools(server: McpServer, client: ZincAppClient) {
     registerLookupAuthorization(server, client)
     registerNtFinalGestor(server, client)
     registerUpsertGestor(server, client)
+    registerPrintables(server, client)
 }
