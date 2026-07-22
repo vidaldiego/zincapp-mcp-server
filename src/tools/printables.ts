@@ -152,6 +152,8 @@ export function registerPrintables(server: McpServer, client: ZincAppClient) {
         'Lee el MODELO completo (JSON) de una serie de printable — la definición del documento que ' +
             'edita el estudio de printables del portal. Léelo SIEMPRE antes de update_printable_model: ' +
             'la actualización reemplaza el modelo entero, así que tu edición parte de este JSON. ' +
+            'Para entender lo que estás leyendo (tipos de nodo, propiedades, expresiones, referencias $), ' +
+            'read_doc("printing.model-language"). ' +
             'Permiso `printables`; sin elevación.',
         {
             seriesUuid: z.string().describe('El uuid de la serie (de list_printable_series)'),
@@ -171,7 +173,12 @@ export function registerPrintables(server: McpServer, client: ZincAppClient) {
             'MODELO ENTERO resultante (no un parche — lo que mandes es lo que queda). El backend guarda ' +
             'un snapshot de versión antes de sobrescribir (mismo camino guardado que usa el portal). ' +
             'Sólo aplica cambios que hayas revisado. Permiso `printables`; sin elevación. Verifica el ' +
-            'resultado visualmente con render_printable.',
+            'resultado visualmente con render_printable.\n\n' +
+            'ANTES DE EDITAR, lee la referencia del lenguaje de modelos: read_doc("printing.model-language"). ' +
+            'Define los tipos de nodo válidos, las propiedades que el renderer lee de verdad, las expresiones ' +
+            '${...}, i18n y las referencias $. Un nodo con una propiedad que el renderer NO lee (p.ej. un ' +
+            'literal HTML) se renderiza como un <div> vacío SIN ERROR: el PDF sale, pero sin tu contenido. ' +
+            'Ver read_doc("printing.recipes") para pitfalls y modos de fallo.',
         {
             seriesUuid: z.string().describe('El uuid de la serie (de list_printable_series)'),
             model: z
@@ -214,7 +221,10 @@ export function registerPrintables(server: McpServer, client: ZincAppClient) {
             'modelo: lee con read_printable_style, edita ese JSON y manda la DEFINICIÓN ENTERA. ' +
             'ATENCIÓN: el estilo es compartido entre series — tu cambio afecta a TODAS las series que ' +
             'lo usen, no sólo a ésta. El backend guarda snapshot de versión antes de sobrescribir. ' +
-            'Permiso `printables`; sin elevación. Verifica con render_printable.',
+            'Permiso `printables`; sin elevación. Verifica con render_printable.\n\n' +
+            'ANTES DE EDITAR, lee read_doc("printing.data-and-styles"): explica qué se comparte entre series, ' +
+            'qué sobrescribe a qué (modelo vs estilo vs tema) y el alcance real de un cambio de estilo. ' +
+            'Comprueba primero con list_printable_series qué series usan este mismo estilo.',
         {
             seriesUuid: z.string().describe('El uuid de la serie cuyo estilo quieres actualizar'),
             definition: z
