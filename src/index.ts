@@ -6,18 +6,23 @@ import { loadConfig } from './config.js'
 import { ZincAppClient } from './client.js'
 import { registerAllTools } from './tools/index.js'
 import { registerAllResources } from './resources/index.js'
+import { registerOfficeRoster } from './tools/roster.js'
+import { OfficeRoster } from './tools/roster-office.js'
 
 async function main() {
     const config = loadConfig()
-    const client = new ZincAppClient(config)
 
     const server = new McpServer({
         name: 'zincapp',
         version: '1.0.0',
     })
 
-    registerAllTools(server, client)
-    registerAllResources(server, client)
+    if (config.agentToken) {
+        const client = new ZincAppClient(config)
+        registerAllTools(server, client)
+        registerAllResources(server, client)
+    }
+    if (config.roster) registerOfficeRoster(server, new OfficeRoster(config.roster))
 
     const transport = new StdioServerTransport()
     await server.connect(transport)
