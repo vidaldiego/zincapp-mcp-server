@@ -27,4 +27,13 @@ test('office stdio exposes Presencia reads and proposals alongside the existing 
         'attendance_presencia_resolution_preview',
     ])
     assert.ok(names.includes('attendance_roster_publish'))
+    assert.deepEqual(names.filter(name => name.startsWith('attendance_roster_week_')).sort(), [
+        'attendance_roster_week_get',
+        'attendance_roster_week_operation',
+        'attendance_roster_week_pdf',
+        'attendance_roster_week_pending',
+        'attendance_roster_week_people',
+        'attendance_roster_week_preview',
+        'attendance_roster_week_shifts',
+    ])
 })

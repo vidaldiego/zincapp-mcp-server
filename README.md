@@ -54,7 +54,7 @@ La herramienta de importación recibe asignaciones verificadas, con la versión
 exacta del turno. La carga directa de PDF y la autenticación de oficina para
 un MCP remoto se tratan aparte.
 
-## Presencia de RR. HH. (candidato B0–B3)
+## Presencia de RR. HH. (candidato B0–B4)
 
 El candidato de laboratorio usa las mismas variables de oficina
 `ZINCAPP_ROSTER_CLI` y `ZINCAPP_ROSTER_PROFILE`. Fija una versión de
@@ -106,6 +106,48 @@ respuesta ambigua. `NOT_OBSERVED` indica que aún no consta un resultado.
 `CONFIRMED`, `REJECTED` y `CANCELLED` son resoluciones registradas. Un error
 de permisos, conflicto o transporte se devuelve como error. La consulta
 es explícita y nunca reenvía la operación.
+
+### Cuadrante semanal
+
+1. Abre el lunes con `attendance_roster_week_get`. Devuelve el personal
+   vigente autorizado, las celdas de borrador y publicadas, la revisión de
+   cada vista y la semana publicada disponible para copiar. Para otra
+   página usa `nextAfterEmployeeId` como `afterEmployeeId` con los mismos
+   filtros. `attendance_roster_week_people`, `attendance_roster_week_shifts`
+   y `attendance_roster_week_pending` ofrecen consultas específicas. En
+   pendientes, `view: published` usa la revisión publicada.
+2. Usa `attendance_roster_week_preview` con un UUID, `draftRevision`,
+   `publishedRevision`, y las parejas exactas persona y fecha. Para un
+   turno indica `SHIFT` y el `shiftId` del catálogo. Puedes indicar centro
+   planificado, sección y minutos de pausa. Usa `REST` para descanso,
+   `DRAFT` para publicar una celda del borrador y `COPY` con
+   `copyFromMonday` para revisar la copia. El sábado puede quedar `PENDING`.
+3. Escoge `SAVE_DRAFT` para guardar en oficina o `PUBLISH` para publicar
+   las celdas revisadas. La revisión indica los bloqueos, incluidas fechas
+   laborables pendientes de las personas seleccionadas. Si se puede
+   aplicar, entrega a la persona `terminalCommand`.
+   La CLI muestra la empresa, la cuenta, los cambios y la huella que la
+   persona debe confirmar en su terminal. Usa un UUID nuevo al cambiar el
+   contenido de la propuesta.
+4. Si el resultado es incierto, compruébalo con
+   `attendance_roster_week_operation` usando el lunes y el UUID. Para
+   descargar la revisión publicada indicada por el recibo, usa
+   `attendance_roster_week_pdf`. El PDF usa el ámbito vigente y se guarda
+   como archivo privado. Para cambiar sólo el sábado, vuelve a revisar y
+   publicar únicamente esas celdas. Los borradores de otras fechas quedan
+   pendientes.
+
+Los archivos de cuadrante se guardan en directorios privados bajo
+`~/.local/state/zincapp-mcp/office-roster-week/`. La respuesta MCP omite
+la prueba de confirmación y entrega la ruta local de la propuesta o del
+PDF. Se pueden eliminar los archivos cuando dejen de ser necesarios.
+
+Para la aceptación en laboratorio sintético, compila con `yarn build` y
+ejecuta `node test/lab/roster-week.mjs MONDAY EMPLOYEE_ID` con un perfil
+de CLI `b4-*` apuntando al laboratorio loopback. Usa una semana sin
+publicar con un empleado y un turno autorizados. El recorrido modifica
+el cuadrante sintético, comprueba cancelación y huella alterada, publica
+la semana con sábado pendiente y comprueba el PDF de su revisión.
 
 La activación del candidato en oficina forma parte del corte coordinado.
 La fixture de entrada de las pruebas se obtuvo de las secciones
