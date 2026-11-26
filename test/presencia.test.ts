@@ -32,7 +32,7 @@ const dayRequest = {
     id: solicitudId, employeeId: 17, workDate, reason: 'Falta la entrada', createdAt: when, status: 'PENDING',
 }
 
-async function setup(t: TestContext, response: unknown, envelope?: unknown, cliError?: string) {
+async function setup(t: TestContext, response: unknown, envelope?: unknown, cliError?: string, artifact?: Buffer) {
     const directory = await mkdtemp(join(tmpdir(), "zincapp-presencia-'"))
     t.after(() => rm(directory, { recursive: true }))
     const executable = join(directory, 'zincapi')
@@ -50,7 +50,10 @@ if (error) {
     process.exit(1)
 }
 const envelope = ${JSON.stringify(envelope ?? null)}
-if (envelope && flag('output')) writeFileSync(flag('output'), JSON.stringify(envelope), { mode: 0o600, flag: 'wx' })
+const artifact = ${JSON.stringify(artifact?.toString('base64') ?? null)}
+if (flag('output') && (envelope || artifact)) {
+    writeFileSync(flag('output'), artifact ? Buffer.from(artifact, 'base64') : JSON.stringify(envelope), { mode: 0o600, flag: 'wx' })
+}
 console.log(JSON.stringify(${JSON.stringify(response)}))
 `
     await writeFile(executable, fakeCLI, { mode: 0o700 })
@@ -398,4 +401,119 @@ test('recovers B3 receipts by operation UUID without a write or retry', async t 
             '--profile=trusted-office', '--json', 'attendance', 'presencia', 'operation', 'get', '--request-id=' + requestId,
         ], input: null }])
     }
+})
+
+const reportFilter = { from: '2026-11-01', until: '2026-11-07', employeeIds: [22, 17], center: { clientId: 0, centerId: 0 } }
+const exportReview = {
+    requestId, filter: { ...reportFilter, employeeIds: [17, 22] }, employeeCount: 2,
+    asOf: '2026-11-26T08:00:00Z', digest: 'a'.repeat(64), expiresAt: '2026-11-26T08:02:00Z',
+}
+const exportEnvelope = {
+    schemaVersion: 1, identity, review: { ...exportReview, proof: 'synthetic-private-export-proof' },
+}
+const reportTotals = { confirmedMs: 3600000, provisionalMs: 0, breakMs: 0 }
+const summary = {
+    from: reportFilter.from, until: reportFilter.until, zone: 'Europe/Madrid', asOf: exportReview.asOf,
+    rows: [{ employeeId: 17, name: 'Persona sintética', dayCount: 1, byStatus: { CLOSED: 1 }, totals: reportTotals }],
+    totals: reportTotals, canExport: true,
+}
+
+test('reads the report summary with the exact optional people, dates and complete center', async t => {
+    const { call, calls } = await setup(t, summary)
+    assert.deepEqual(await call('report_summary', reportFilter), { data: summary })
+    assert.deepEqual((await calls())[0].args, [
+        '--profile=trusted-office', '--json', 'attendance', 'presencia', 'report', 'summary',
+        '--from=2026-11-01', '--until=2026-11-07', '--employee-id=22', '--employee-id=17', '--client-id=0', '--center-id=0',
+    ])
+})
+
+test('rejects a report row outside the explicitly selected employees', async t => {
+    const { call } = await setup(t, { ...summary, rows: [{ ...summary.rows[0], employeeId: 18 }] })
+    assert.match((await call('report_summary', reportFilter)).error ?? '', /ámbito solicitado/)
+})
+
+test('retains the exact private export review and asks for confirmation in the CLI terminal', async t => {
+    const { call, calls, stateDir } = await setup(t, exportReview, exportEnvelope)
+    const result = await call('export_preview', { requestId, filter: reportFilter })
+    assert.equal(result.error, undefined)
+    assert.deepEqual(result.data.review, exportReview)
+    assert.equal(result.data.identity.companyId, 42)
+    assert.match(result.data.terminalCommand, /attendance presencia report export --proposal=/)
+    assert.doesNotMatch(JSON.stringify(result.data), /synthetic-private-export-proof|--yes|https:\/\/api.example.test/)
+    const { proposalPath } = result.data
+    assert.ok(proposalPath.startsWith(stateDir))
+    assert.deepEqual(await readdir(dirname(proposalPath)), ['proposal.json'])
+    assert.equal((await lstat(proposalPath)).mode & 0o777, 0o600)
+    assert.deepEqual((await calls())[0].input, { requestId, filter: reportFilter })
+    assert.deepEqual((await calls())[0].args.slice(4, 6), ['report', 'preview'])
+})
+
+test('rejects an export review that changes a date or a private proposal with a different digest', async t => {
+    for (const [response, saved] of [
+        [{ ...exportReview, filter: { ...exportReview.filter, until: '2026-11-08' } }, exportEnvelope],
+        [exportReview, { ...exportEnvelope, review: { ...exportEnvelope.review, digest: 'b'.repeat(64) } }],
+    ]) {
+        const { call, stateDir } = await setup(t, response, saved)
+        const result = await call('export_preview', { requestId, filter: reportFilter })
+        assert.match(result.error ?? '', /revisión/)
+        assert.deepEqual(await readdir(stateDir), [])
+    }
+})
+
+test('accepts a normalized all-employees export with no center', async t => {
+    const filter = { from: reportFilter.from, until: reportFilter.until }
+    const normalized = { ...exportReview, filter: { ...filter, employeeIds: [], center: null }, employeeCount: 24 }
+    const { call } = await setup(t, normalized, {
+        ...exportEnvelope, review: { ...normalized, proof: 'synthetic-proof-all' },
+    })
+    assert.deepEqual((await call('export_preview', { requestId, filter })).data.review, normalized)
+})
+
+test('reports XLSX status with one explicit receipt inquiry and no application', async t => {
+    for (const status of ['NOT_OBSERVED', 'QUEUED', 'RUNNING', 'READY', 'FAILED', 'EXPIRED']) {
+        const receipt = status === 'NOT_OBSERVED' ? { requestId, status } : {
+            requestId, status, from: reportFilter.from, until: reportFilter.until, asOf: exportReview.asOf,
+            errorCode: status === 'FAILED' ? 'PRESENCIA_EXPORT_GENERATION_FAILED' : null,
+        }
+        const { call, calls } = await setup(t, receipt)
+        assert.deepEqual(await call('export_operation', { requestId }), { data: receipt })
+        assert.deepEqual((await calls()).map(call => call.args.slice(4)), [['report', 'operation', `--request-id=${requestId}`]])
+    }
+})
+
+const xlsx = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('synthetic workbook')])
+const xlsxResult = { requestId, filename: 'presencia-2026-11-01_2026-11-07.xlsx', bytes: xlsx.length }
+
+test('downloads an exact XLSX to a private file without a receipt refresh', async t => {
+    const { call, calls, stateDir } = await setup(t, xlsxResult, undefined, undefined, xlsx)
+    const { xlsxPath, ...metadata } = (await call('export_xlsx', { requestId })).data
+    assert.deepEqual(metadata, xlsxResult)
+    assert.ok(xlsxPath.startsWith(stateDir))
+    assert.ok(xlsxPath.endsWith(xlsxResult.filename))
+    assert.equal((await lstat(xlsxPath)).mode & 0o777, 0o600)
+    assert.equal((await lstat(dirname(xlsxPath))).mode & 0o777, 0o700)
+    assert.deepEqual(await readFile(xlsxPath), xlsx)
+    const [download] = await calls()
+    assert.equal((await calls()).length, 1)
+    assert.deepEqual(download.args.slice(4, 7), ['report', 'xlsx', `--request-id=${requestId}`])
+})
+
+test('does not retain XLSX files with invalid metadata or contents', async t => {
+    for (const [metadata, bytes] of [
+        [{ ...xlsxResult, filename: '../outside.xlsx' }, xlsx],
+        [xlsxResult, Buffer.alloc(xlsx.length)],
+    ] as const) {
+        const { call, stateDir } = await setup(t, metadata, undefined, undefined, bytes)
+        assert.ok((await call('export_xlsx', { requestId })).error)
+        assert.deepEqual(await readdir(stateDir), [])
+    }
+})
+
+test('makes unfinished or denied XLSX download a single explicit failure without leaking stderr', async t => {
+    const { call, calls, stateDir } = await setup(t, undefined, undefined, 'HTTP 409 (PRESENCIA_EXPORT_NOT_READY) sensitive detail')
+    const { error } = await call('export_xlsx', { requestId })
+    assert.match(error ?? '', /HTTP 409/)
+    assert.doesNotMatch(error ?? '', /sensitive/)
+    assert.equal((await calls()).length, 1)
+    assert.deepEqual(await readdir(stateDir), [])
 })

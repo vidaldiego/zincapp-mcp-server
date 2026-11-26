@@ -30,6 +30,7 @@ export const configuration = z.object({
 }).strict()
 
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+const dayTotals = z.object({ confirmedMs: count, provisionalMs: count, breakMs: count }).strict()
 const cursor = z.string().min(1).max(4096)
 const zone = z.string().min(1).max(50)
 const reason = z.string().min(1).max(500).regex(/\S/)
@@ -72,7 +73,7 @@ export const officeDays = z.object({
 }).strict()
 export const day = z.object({
     employeeId, name: z.string(), workDate: date, zone, revision, status: dayStatus, schedule: schedule.nullish(),
-    totals: z.object({ confirmedMs: count, provisionalMs: count, breakMs: count }).strict(),
+    totals: dayTotals,
     movements: z.array(punch.extend({
         id: requestId, place, origin: z.enum(['OWN_PUNCH', 'ASSISTED_PUNCH', 'CORRECTION', 'REQUEST_RESOLVE']),
         effective: z.boolean(),
@@ -125,11 +126,12 @@ export const review = z.discriminatedUnion('kind', [
     reviewFields.extend({ kind: z.literal('CORRECTION'), proposal: correctionInput }).strict(),
     reviewFields.extend({ kind: z.literal('REQUEST_RESOLVE'), proposal: resolutionProposal }).strict(),
 ])
+const proposalIdentity = z.object({
+    companyId: employeeId, cif: z.string(), userName: z.string(), apiBaseUrl: z.string().url(),
+}).strict()
 export const proposalEnvelope = z.object({
     schemaVersion: z.literal(1),
-    identity: z.object({
-        companyId: employeeId, cif: z.string(), userName: z.string(), apiBaseUrl: z.string().url(),
-    }).strict(),
+    identity: proposalIdentity,
     review,
 }).strict()
 const b3ReceiptKind = z.enum(['CORRECTION', 'REQUEST_CREATE', 'REQUEST_RESOLVE'])
@@ -142,3 +144,37 @@ export const receipt = z.object({
     workDate: date.nullish(),
     punch: punch.nullish(),
 }).strict().refine(value => !b3ReceiptKind.safeParse(value.kind).success || value.punch == null)
+
+const reportDate = date.refine(value => value >= '1000-01-01' && value <= '9998-12-31')
+const reportEmployees = z.array(employeeId).max(500)
+    .refine(ids => new Set(ids).size === ids.length, 'Indica cada empleado una sola vez.')
+export const reportFilter = z.object({
+    from: reportDate,
+    until: reportDate,
+    employeeIds: reportEmployees.optional(),
+    center: z.object(centerFields).strict().optional(),
+}).strict()
+export const reportRequest = z.object({ requestId, filter: reportFilter }).strict()
+export const reportSummary = z.object({
+    from: reportDate, until: reportDate, zone, asOf: timestamp, canExport: z.boolean(),
+    rows: z.array(z.object({
+        employeeId, name: z.string(), dayCount: count, byStatus: z.record(dayStatus, count), totals: dayTotals,
+    }).strict()).max(500),
+    totals: dayTotals,
+}).strict()
+export const reportReview = z.object({
+    requestId,
+    filter: reportFilter.extend({ employeeIds: reportEmployees, center: reportFilter.shape.center.nullable() }),
+    employeeCount: count.max(500), asOf: timestamp, digest: z.string().regex(/^[0-9a-f]{64}$/), expiresAt: timestamp,
+}).strict()
+export const reportEnvelope = z.object({
+    schemaVersion: z.literal(1), identity: proposalIdentity, review: reportReview.extend({ proof: reviewFields.shape.proof }),
+}).strict()
+export const reportReceipt = z.object({
+    requestId, status: z.enum(['NOT_OBSERVED', 'QUEUED', 'RUNNING', 'READY', 'FAILED', 'EXPIRED']),
+    from: reportDate.nullish(), until: reportDate.nullish(), asOf: timestamp.nullish(),
+    errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullish(),
+}).strict()
+export const reportXlsx = z.object({
+    requestId, filename: z.string().regex(/^presencia-\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}\.xlsx$/), bytes: count.positive(),
+}).strict()
