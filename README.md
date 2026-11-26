@@ -53,3 +53,41 @@ de la revisión son distintos.
 La herramienta de importación recibe asignaciones verificadas, con la versión
 exacta del turno. La carga directa de PDF y la autenticación de oficina para
 un MCP remoto se tratan aparte.
+
+## Presencia de RR. HH. (candidato B0–B2)
+
+El candidato de laboratorio usa las mismas variables de oficina
+`ZINCAPP_ROSTER_CLI` y `ZINCAPP_ROSTER_PROFILE`. Fija una versión de
+`zincapi` con `attendance presencia` y configura una instancia local
+por perfil. El perfil determina la empresa y los permisos vigentes.
+
+1. `attendance_presencia_configuration_get` consulta las vigencias y la
+   revisión de configuración del empleado indicado.
+2. `attendance_presencia_configuration_preview` prepara el cambio para el
+   empleado y la revisión seleccionados. Indica fecha de vigencia, modalidad,
+   reglas y centros por sus IDs de cliente y centro.
+3. `attendance_presencia_assist_preview` prepara un fichaje asistido. Indica
+   empleado, acción, centro o remoto y motivo. La hora la fija el servidor
+   al aplicar. Usa un UUID por intento y consérvalo para comprobar su resultado.
+
+La respuesta de cada vista previa muestra persona, empresa, cuenta, propuesta
+normalizada, fecha, revisión, huella y vencimiento. El archivo
+`~/.local/state/zincapp-mcp/office-presencia/review-*/proposal.json` es privado.
+Contiene la prueba de revisión necesaria para la CLI, que queda fuera de la
+respuesta MCP. Facilita a la persona el comando `terminalCommand`
+que figura en la respuesta. La persona lo ejecuta en su terminal,
+revisa el cambio exacto y lo confirma de forma interactiva. Si la revisión
+caduca o el contexto cambia, obtén una nueva vista previa antes de aplicar.
+Una vez aplicada o descartada la propuesta, la persona puede eliminar su
+archivo y el directorio individual de revisión.
+
+`attendance_presencia_operation` consulta el recibo por UUID después de una
+respuesta ambigua. `NOT_OBSERVED` indica que aún no consta un resultado.
+`CONFIRMED`, `REJECTED` y `CANCELLED` son resoluciones registradas. Un error
+de permisos, conflicto o transporte se devuelve como error. La consulta
+es explícita y nunca reenvía la operación.
+
+La activación del candidato en oficina forma parte del corte coordinado.
+La fixture de entrada de las pruebas se obtuvo de las secciones
+`ConfigurationChange` y `AssistedPunch` del contrato de ZincAPI
+`contracts/presencia/fixtures/b0-b2.json` en `4d68f5b7c`.

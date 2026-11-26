@@ -1,0 +1,22 @@
+{
+  "ConfigurationChange": {
+    "requestId": "65be7ee8-4c66-4a98-9411-8c4312a6a6af",
+    "revision": "initial",
+    "effectiveFrom": "2026-11-26",
+    "mode": "VOLUNTARY",
+    "allowRemote": true,
+    "requireGps": true,
+    "centers": []
+  },
+  "AssistedPunch": {
+    "requestId": "65be7ee8-4c66-4a98-9411-8c4312a6a6af",
+    "employeeId": 17,
+    "action": "ENTRY",
+    "place": {
+      "kind": "CENTER",
+      "clientId": 9,
+      "centerId": 2
+    },
+    "reason": "El empleado no dispone de móvil."
+  }
+}
