@@ -24,9 +24,13 @@ function cellKey(cell: { employeeId: number; date: string }) {
     return `${cell.employeeId}/${cell.date}`
 }
 
+function weekDate(monday: string, offset: number) {
+    return new Date(Date.parse(monday) + offset * 86_400_000).toISOString().slice(0, 10)
+}
+
 function validateIntent(week: string, intent: z.output<typeof rosterIntent>) {
     const selected = new Set(intent.cells.map(cellKey))
-    const end = new Date(Date.parse(week) + 6 * 86_400_000).toISOString().slice(0, 10)
+    const end = weekDate(week, 6)
     if (selected.size !== intent.cells.length || intent.cells.some(({ date }) => date < week || date > end)) {
         throw new RosterWeekToolError('Indica cada pareja persona y fecha una sola vez y dentro de la semana.')
     }
@@ -83,6 +87,8 @@ export class OfficeRosterWeek {
         const selectedWeek = monday.parse(week)
         const intent = rosterIntent.parse(raw)
         const selected = validateIntent(selectedWeek, intent)
+        const employees = new Set(intent.cells.map(cell => cell.employeeId))
+        const friday = weekDate(selectedWeek, 4)
         const directory = await this.artifactDirectory('review-')
         const inputPath = join(directory, 'input.json')
         const proposalPath = join(directory, 'proposal.json')
@@ -95,7 +101,11 @@ export class OfficeRosterWeek {
             if (reviewed.monday !== selectedWeek || reviewed.requestId !== intent.requestId ||
                 reviewed.action !== intent.action || reviewed.draftRevision !== intent.draftRevision ||
                 (reviewed.publishedRevision ?? null) !== intent.publishedRevision ||
-                [...reviewed.changes, ...reviewed.blockers].some(result => !selected.has(cellKey(result)))) {
+                reviewed.changes.some(change => !selected.has(cellKey(change))) ||
+                reviewed.blockers.some(blocker => !selected.has(cellKey(blocker)) && !(
+                    intent.action === 'PUBLISH' && blocker.code === 'PRESENCIA_ROSTER_PENDING_WEEKDAY' &&
+                    employees.has(blocker.employeeId) && blocker.date >= selectedWeek && blocker.date <= friday
+                ))) {
                 throw new RosterWeekToolError('La revisión de cuadrante no coincide con la operación solicitada.')
             }
             if (reviewed.blockers.length) return { review: reviewed }

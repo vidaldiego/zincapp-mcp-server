@@ -54,11 +54,14 @@ async function acceptance() {
     const scope = { week, employeeIds: [employeeId] }
     const lookup = () => tool('get', scope)
     const receipt = requestId => tool('operation', { week, requestId })
-    async function preview(snapshot, action, cells) {
-        const prepared = await tool('preview', { week, intent: {
+    function review(snapshot, action, cells) {
+        return tool('preview', { week, intent: {
             requestId: randomUUID(), action, draftRevision: snapshot.draftRevision,
             publishedRevision: snapshot.publishedRevision ?? null, cells: cells.map(cell => ({ employeeId, ...cell })),
         } })
+    }
+    async function preview(snapshot, action, cells) {
+        const prepared = await review(snapshot, action, cells)
         assert.deepEqual(prepared.review.blockers, [], 'Synthetic week must be eligible and unused')
         assert(prepared.proposalPath.startsWith(stateDir + '/'))
         assert(!('proof' in prepared.review))
@@ -82,38 +85,50 @@ async function acceptance() {
         assert.deepEqual(shifts, original.shifts)
         assert.deepEqual(await tool('people', scope), original.people)
         assert(shifts.length > 0, 'Synthetic fixture needs an authorized shift')
-        const [{ date: monday }, { date: tuesday }, { date: wednesday }, { date: thursday }, , { date: saturday }] = original.people[0].cells
+        const dates = original.people[0].cells.map(cell => cell.date)
+        const [monday, tuesday, wednesday, thursday, , saturday] = dates
+        const at = (snapshot, date) => snapshot.people[0].cells.find(cell => cell.date === date)
         const shift = { choice: 'SHIFT', shiftId: shifts[0].id, section: 'MCP sintético', paidBreakMinutes: 5, unpaidBreakMinutes: 10 }
-        const { prepared: draft, saved } = await preview(original, 'SAVE_DRAFT', [{ date: thursday, ...shift }])
+        const blocked = await review(original, 'PUBLISH', [{ date: monday, ...shift }])
+        assert(blocked.review.blockers.some(blocker => blocker.code === 'PRESENCIA_ROSTER_PENDING_WEEKDAY' && blocker.date !== monday))
+        assert.equal(blocked.proposalPath, undefined)
+        const { prepared: first, saved } = await preview(original, 'PUBLISH', [
+            ...dates.slice(0, 5).map(date => ({ date, ...shift })), { date: saturday, choice: 'PENDING' },
+        ])
 
-        terminal('cancel', draft)
-        assert.equal((await receipt(draft.review.requestId)).outcome, 'NOT_OBSERVED')
-        await writeFile(draft.proposalPath, JSON.stringify({
+        terminal('cancel', first)
+        assert.equal((await receipt(first.review.requestId)).outcome, 'NOT_OBSERVED')
+        await writeFile(first.proposalPath, JSON.stringify({
             ...saved, review: { ...saved.review, digest: saved.review.digest === '0'.repeat(64) ? '1'.repeat(64) : '0'.repeat(64) },
         }))
-        terminal('altered', draft)
-        assert.equal((await receipt(draft.review.requestId)).outcome, 'NOT_OBSERVED')
-        await writeFile(draft.proposalPath, JSON.stringify(saved))
-        terminal('confirm', draft)
-        assert.equal((await receipt(draft.review.requestId)).outcome, 'CONFIRMED')
-        const withDraft = await lookup()
-        assert.equal(withDraft.people[0].cells[3].draft.section, shift.section)
-        assert.equal(withDraft.people[0].cells[3].draft.paidBreakMinutes, shift.paidBreakMinutes)
-        assert.equal(withDraft.people[0].cells[3].draft.unpaidBreakMinutes, shift.unpaidBreakMinutes)
-
-        const { prepared: first } = await preview(withDraft, 'PUBLISH', [
-            { date: monday, ...shift }, { date: wednesday, choice: 'REST' }, { date: saturday, choice: 'PENDING' },
-        ])
+        terminal('altered', first)
+        assert.equal((await receipt(first.review.requestId)).outcome, 'NOT_OBSERVED')
+        await writeFile(first.proposalPath, JSON.stringify(saved))
         terminal('confirm', first)
         const firstReceipt = await receipt(first.review.requestId)
         assert.equal(firstReceipt.outcome, 'CONFIRMED')
         const published = await lookup()
-        const at = (snapshot, date) => snapshot.people[0].cells.find(cell => cell.date === date)
         assert.equal(at(published, saturday).published.kind, 'PENDING')
-        assert.deepEqual(at(published, tuesday), at(original, tuesday))
-        assert.deepEqual(at(published, thursday), at(withDraft, thursday))
         const pending = await tool('pending', scope)
         assert(pending[0].dates.includes(saturday))
+
+        const { prepared: draft } = await preview(published, 'SAVE_DRAFT', [{ date: thursday, ...shift, section: 'MCP jueves' }])
+        terminal('confirm', draft)
+        assert.equal((await receipt(draft.review.requestId)).outcome, 'CONFIRMED')
+        const withDraft = await lookup()
+        assert.equal(at(withDraft, thursday).draft.section, 'MCP jueves')
+        assert.equal(at(withDraft, thursday).draft.paidBreakMinutes, shift.paidBreakMinutes)
+        assert.equal(at(withDraft, thursday).draft.unpaidBreakMinutes, shift.unpaidBreakMinutes)
+
+        const { prepared: nonContiguous } = await preview(withDraft, 'PUBLISH', [
+            { date: monday, choice: 'REST' }, { date: wednesday, choice: 'REST' },
+        ])
+        terminal('confirm', nonContiguous)
+        const exact = await lookup()
+        assert.equal(at(exact, monday).published.kind, 'REST')
+        assert.equal(at(exact, wednesday).published.kind, 'REST')
+        assert.deepEqual(at(exact, tuesday), at(withDraft, tuesday))
+        assert.deepEqual(at(exact, thursday), at(withDraft, thursday))
 
         const pdf = await tool('pdf', { ...scope, revision: firstReceipt.publishedRevision })
         assert(pdf.pdfPath.startsWith(stateDir + '/'))
@@ -122,13 +137,13 @@ async function acceptance() {
         assert.equal(bytes.length, pdf.bytes)
         assert.equal(bytes.subarray(0, 5).toString(), '%PDF-')
 
-        const { prepared: saturdayOnly } = await preview(published, 'PUBLISH', [{ date: saturday, ...shift }])
+        const { prepared: saturdayOnly } = await preview(exact, 'PUBLISH', [{ date: saturday, ...shift }])
         terminal('confirm', saturdayOnly)
-        assert.equal((await receipt(saturdayOnly.review.requestId)).publishedRevision, firstReceipt.publishedRevision + 1)
+        assert.equal((await receipt(saturdayOnly.review.requestId)).publishedRevision, exact.publishedRevision + 1)
         const revised = await lookup()
         assert.equal(at(revised, saturday).published.kind, 'SHIFT')
         assert.deepEqual(at(revised, thursday), at(withDraft, thursday))
-        assert.deepEqual(at(revised, wednesday), at(published, wednesday))
+        assert.deepEqual(at(revised, wednesday), at(exact, wednesday))
         const archivedPdf = await tool('pdf', { ...scope, revision: firstReceipt.publishedRevision })
         assert.equal(archivedPdf.revision, firstReceipt.publishedRevision)
         console.log('PASS MCP stdio + real CLI: parity, private handoff, cancellation, altered digest, exact partial publication, independent Saturday and published PDF')

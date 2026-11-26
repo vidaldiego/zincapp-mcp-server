@@ -123,8 +123,9 @@ es explícita y nunca reenvía la operación.
    `DRAFT` para publicar una celda del borrador y `COPY` con
    `copyFromMonday` para revisar la copia. El sábado puede quedar `PENDING`.
 3. Escoge `SAVE_DRAFT` para guardar en oficina o `PUBLISH` para publicar
-   las celdas revisadas. Si faltan decisiones, la revisión indica los
-   bloqueos. Si se puede aplicar, entrega a la persona `terminalCommand`.
+   las celdas revisadas. La revisión indica los bloqueos, incluidas fechas
+   laborables pendientes de las personas seleccionadas. Si se puede
+   aplicar, entrega a la persona `terminalCommand`.
    La CLI muestra la empresa, la cuenta, los cambios y la huella que la
    persona debe confirmar en su terminal. Usa un UUID nuevo al cambiar el
    contenido de la propuesta.

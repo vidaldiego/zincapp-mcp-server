@@ -158,6 +158,26 @@ test('returns blockers for a copy proposal without writing a confirmable file', 
     assert.deepEqual((await calls())[0].input, copy)
 })
 
+test('returns missing weekdays for the same employee outside a partial publication', async t => {
+    const blocked = {
+        ...visible, expiresAt: null,
+        blockers: [{ employeeId: 17, date: '2026-11-24', code: 'PRESENCIA_ROSTER_PENDING_WEEKDAY' }],
+    }
+    const { call, stateDir } = await setup(t, { response: blocked })
+    assert.deepEqual(await call('preview', { week: monday, intent }), { data: { review: blocked } })
+    assert.deepEqual(await readdir(stateDir), [])
+})
+
+test('rejects diagnostic blockers for people outside the requested publication', async t => {
+    const blocked = {
+        ...visible, expiresAt: null,
+        blockers: [{ employeeId: 18, date: '2026-11-24', code: 'PRESENCIA_ROSTER_PENDING_WEEKDAY' }],
+    }
+    const { call, stateDir } = await setup(t, { response: blocked })
+    assert.match((await call('preview', { week: monday, intent })).error ?? '', /revisión.*solicitada/)
+    assert.deepEqual(await readdir(stateDir), [])
+})
+
 test('refuses a private proposal if its digest or selection changed', async t => {
     for (const saved of [
         { ...envelope, review: { ...envelope.review, digest: 'b'.repeat(64) } },

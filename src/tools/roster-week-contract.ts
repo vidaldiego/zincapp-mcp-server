@@ -64,7 +64,7 @@ export const rosterReview = z.object({
     requestId, action, monday, draftRevision: identifier, publishedRevision: identifier.min(1).nullish(),
     digest: z.string().regex(/^[0-9a-f]{64}$/), expiresAt: instant.nullish(),
     changes: z.array(subject.extend({ before: value.nullish(), after: value }).strict()).max(500),
-    blockers: z.array(subject.extend({ code: z.string().min(1).max(80) }).strict()).max(500),
+    blockers: z.array(subject.extend({ code: z.string().max(64).regex(/^PRESENCIA_[A-Z_]+$/) }).strict()).max(3000),
 }).strict()
 
 export const rosterEnvelope = z.object({
