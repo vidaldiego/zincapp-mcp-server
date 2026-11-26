@@ -19,7 +19,12 @@ test('office stdio exposes Presencia reads and proposals alongside the existing 
         'attendance_presencia_assist_preview',
         'attendance_presencia_configuration_get',
         'attendance_presencia_configuration_preview',
+        'attendance_presencia_correction_preview',
+        'attendance_presencia_days_get',
+        'attendance_presencia_days_list',
         'attendance_presencia_operation',
+        'attendance_presencia_requests_list',
+        'attendance_presencia_resolution_preview',
     ])
     assert.ok(names.includes('attendance_roster_publish'))
 })
