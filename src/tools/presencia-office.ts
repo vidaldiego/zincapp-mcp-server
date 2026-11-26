@@ -12,7 +12,7 @@ const date = z.string().date()
 const timestamp = z.string().datetime({ offset: true })
 const revision = z.string().min(1).max(128)
 const action = z.enum(['ENTRY', 'START_BREAK', 'END_BREAK', 'EXIT'])
-const centerFields = { clientId: identifier, centerId: identifier.min(1) }
+const centerFields = { clientId: identifier, centerId: identifier }
 const place = z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('CENTER'), ...centerFields }).strict(),
     z.object({ kind: z.literal('REMOTE') }).strict(),

@@ -104,13 +104,13 @@ test('preserves the exact subject, center, action and reason on assisted preview
     assert.deepEqual(command.input, AssistedPunch)
 })
 
-test('preserves clientId zero when previewing a punch at a company-owned center', async t => {
-    const punch = { ...AssistedPunch, place: { kind: 'CENTER', clientId: 0, centerId: 2 } }
+test('preserves the default company center when previewing a punch', async t => {
+    const punch = { ...AssistedPunch, place: { kind: 'CENTER', clientId: 0, centerId: 0 } }
     const localReview = { ...review, proposal: punch }
     const { call, calls } = await setup(t, localReview, { schemaVersion: 1, identity, review: localReview })
     const result = await call('assist_preview', { punch })
-    assert.deepEqual(result.data?.review.proposal.place, { kind: 'CENTER', clientId: 0, centerId: 2 })
-    assert.deepEqual((await calls())[0].input.place, { kind: 'CENTER', clientId: 0, centerId: 2 })
+    assert.deepEqual(result.data?.review.proposal.place, { kind: 'CENTER', clientId: 0, centerId: 0 })
+    assert.deepEqual((await calls())[0].input.place, { kind: 'CENTER', clientId: 0, centerId: 0 })
 })
 
 test('rejects GPS and caller-supplied CLI overrides before any child process', async t => {
