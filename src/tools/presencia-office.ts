@@ -1,17 +1,20 @@
 import { execFile } from 'node:child_process'
-import { readFile, rm, unlink, writeFile } from 'node:fs/promises'
+import { readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { isDeepStrictEqual, promisify } from 'node:util'
 import type { z } from 'zod'
-import { createOfficeDirectory, privateOfficeFileSize, shellQuote } from './office-files.js'
+import { createOfficeDirectory, matchesPrivateOfficeFile, privateOfficeFileSize, shellQuote } from './office-files.js'
 import {
     assistedPunch, configuration, configurationChange, correctionChange, correctionInput, day, daysFilters, daySubject,
-    employeeId, officeDays, proposalEnvelope, receipt, requestId, requestsFilters, requestsPage, resolutionInput, review,
+    employeeId, officeDays, proposalEnvelope, receipt, reportEnvelope, reportFilter, reportReceipt, reportRequest,
+    reportReview, reportSummary, reportXlsx, requestId, requestsFilters, requestsPage, resolutionInput, review,
 } from './presencia-contract.js'
 import type { OfficeRosterConfig } from './roster-office.js'
 
 const execute = promisify(execFile)
 const maxBytes = 4 << 20
+const maxXlsxBytes = 16 << 20
+const xlsxHeader = Buffer.from([0x50, 0x4b, 0x03, 0x04])
 export class PresenciaToolError extends Error {}
 
 function cliFlags(values: Record<string, string | number | undefined>) {
@@ -23,6 +26,17 @@ function comparableChange(change: z.output<typeof correctionChange>) {
     const normalized = { ...change, movement: { ...change.movement, at: Date.parse(change.movement.at) } }
     if (!('exit' in change)) return normalized
     return { ...normalized, exit: { ...change.exit, at: Date.parse(change.exit.at) } }
+}
+
+function verifyReportPeriod({ from, until }: z.output<typeof reportFilter>) {
+    const elapsedDays = (Date.parse(until) - Date.parse(from)) / 86_400_000
+    if (elapsedDays < 0 || elapsedDays > 365) {
+        throw new PresenciaToolError('Indica un periodo de hasta 366 días, con la fecha inicial anterior o igual a la final.')
+    }
+}
+
+function normalizedReportFilter(filter: z.output<typeof reportRequest>['filter'] | z.output<typeof reportReview>['filter']) {
+    return { ...filter, employeeIds: [...(filter.employeeIds ?? [])].sort((a, b) => a - b), center: filter.center ?? null }
 }
 
 export class OfficePresencia {
@@ -119,11 +133,35 @@ export class OfficePresencia {
         })
     }
 
-    private async preview(
+    private preview(
         group: 'configuration' | 'assist' | 'correction' | 'resolution',
         input: { requestId: string },
         args: string[],
         matches: (reviewed: z.output<typeof review>) => boolean,
+    ) {
+        return this.stageReview(group, 'apply', input, args, raw => {
+            const reviewed = review.parse(raw)
+            if (reviewed.requestId !== input.requestId || reviewed.proposal.requestId !== input.requestId || !matches(reviewed)) {
+                throw new PresenciaToolError('La revisión de Presencia no coincide con la operación solicitada.')
+            }
+            return reviewed
+        }, (raw, reviewed) => {
+            const saved = proposalEnvelope.parse(raw)
+            if (!isDeepStrictEqual(saved.review, reviewed)) {
+                throw new PresenciaToolError('La propuesta guardada difiere de la revisión de Presencia.')
+            }
+            const { proof, ...visibleReview } = reviewed
+            return { review: visibleReview, identity: saved.identity }
+        })
+    }
+
+    private async stageReview<Reported, Visible>(
+        group: 'configuration' | 'assist' | 'correction' | 'resolution' | 'report',
+        confirmVerb: 'apply' | 'export',
+        input: { requestId: string },
+        args: string[],
+        readReview: (raw: unknown) => Reported,
+        readProposal: (raw: unknown, reviewed: Reported) => { review: Visible; identity: z.output<typeof proposalEnvelope>['identity'] },
     ) {
         const directory = await createOfficeDirectory(this.config.stateDir, 'review-')
         if (!directory) {
@@ -134,27 +172,20 @@ export class OfficePresencia {
         const proposalPath = join(directory, 'proposal.json')
         try {
             await writeFile(inputPath, JSON.stringify(input), { mode: 0o600, flag: 'wx' })
-            const reviewed = review.parse(await this.command([
+            const reviewed = readReview(await this.command([
                 group, 'preview', ...args, `--input=${inputPath}`, `--output=${proposalPath}`,
             ]))
-            if (reviewed.requestId !== input.requestId || reviewed.proposal.requestId !== input.requestId || !matches(reviewed)) {
-                throw new PresenciaToolError('La revisión de Presencia no coincide con la operación solicitada.')
-            }
             if (await privateOfficeFileSize(proposalPath, maxBytes) === undefined) {
                 throw new PresenciaToolError('La CLI no guardó una propuesta privada de Presencia.')
             }
-            const saved = proposalEnvelope.parse(JSON.parse(await readFile(proposalPath, 'utf8')))
-            if (!isDeepStrictEqual(saved.review, reviewed)) {
-                throw new PresenciaToolError('La propuesta guardada difiere de la revisión de Presencia.')
-            }
+            const checked = readProposal(JSON.parse(await readFile(proposalPath, 'utf8')), reviewed)
             await unlink(inputPath)
-            const { proof, ...visibleReview } = reviewed
-            const { companyId, cif, userName } = saved.identity
+            const { companyId, cif, userName } = checked.identity
             const terminalCommand = [
                 shellQuote(this.config.executable), `--profile=${shellQuote(this.config.profile)}`,
-                'attendance', 'presencia', group, 'apply', `--proposal=${shellQuote(proposalPath)}`,
+                'attendance', 'presencia', group, confirmVerb, `--proposal=${shellQuote(proposalPath)}`,
             ].join(' ')
-            return { review: visibleReview, identity: { companyId, cif, userName }, proposalPath, terminalCommand }
+            return { review: checked.review, identity: { companyId, cif, userName }, proposalPath, terminalCommand }
         } catch (error) {
             await rm(directory, { recursive: true })
             throw error
@@ -166,5 +197,69 @@ export class OfficePresencia {
         const result = receipt.parse(await this.command(['operation', 'get', `--request-id=${uuid}`]))
         if (result.requestId !== uuid) throw new PresenciaToolError('El recibo corresponde a otra operación de Presencia.')
         return result
+    }
+
+    async report(filters: z.input<typeof reportFilter>) {
+        const scope = reportFilter.parse(filters)
+        verifyReportPeriod(scope)
+        const selected = new Set(scope.employeeIds)
+        const result = reportSummary.parse(await this.command([
+            'report', 'summary', ...cliFlags({ from: scope.from, until: scope.until }),
+            ...[...selected].map(id => `--employee-id=${id}`),
+            ...cliFlags({ 'client-id': scope.center?.clientId, 'center-id': scope.center?.centerId }),
+        ]))
+        if (result.from !== scope.from || result.until !== scope.until ||
+            (selected.size > 0 && result.rows.some(row => !selected.has(row.employeeId)))) {
+            throw new PresenciaToolError('El informe de Presencia no coincide con el ámbito solicitado.')
+        }
+        return result
+    }
+
+    previewReport(raw: z.input<typeof reportRequest>) {
+        const input = reportRequest.parse(raw)
+        verifyReportPeriod(input.filter)
+        const scope = normalizedReportFilter(input.filter)
+        return this.stageReview('report', 'export', input, [], output => {
+            const reviewed = reportReview.parse(output)
+            if (reviewed.requestId !== input.requestId || !isDeepStrictEqual(normalizedReportFilter(reviewed.filter), scope) ||
+                (scope.employeeIds.length > 0 && reviewed.employeeCount > scope.employeeIds.length)) {
+                throw new PresenciaToolError('La revisión del informe de Presencia no coincide con el ámbito solicitado.')
+            }
+            return reviewed
+        }, (output, reviewed) => {
+            const saved = reportEnvelope.parse(output)
+            const { proof, ...visible } = saved.review
+            if (!isDeepStrictEqual(visible, reviewed)) {
+                throw new PresenciaToolError('La propuesta guardada difiere de la revisión del informe de Presencia.')
+            }
+            return { review: reviewed, identity: saved.identity }
+        })
+    }
+
+    async reportOperation(id: string) {
+        const uuid = requestId.parse(id)
+        const result = reportReceipt.parse(await this.command(['report', 'operation', `--request-id=${uuid}`]))
+        if (result.requestId !== uuid) throw new PresenciaToolError('El recibo corresponde a otra exportación de Presencia.')
+        return result
+    }
+
+    async reportXlsx(id: string) {
+        const uuid = requestId.parse(id)
+        const directory = await createOfficeDirectory(this.config.stateDir, 'xlsx-')
+        if (!directory) throw new PresenciaToolError('El directorio de informes de Presencia debe ser privado y pertenecer al usuario del MCP.')
+
+        const stagingPath = join(directory, 'report.xlsx')
+        try {
+            const result = reportXlsx.parse(await this.command(['report', 'xlsx', `--request-id=${uuid}`, `--output=${stagingPath}`]))
+            if (result.requestId !== uuid || !await matchesPrivateOfficeFile(stagingPath, maxXlsxBytes, result.bytes, xlsxHeader)) {
+                throw new PresenciaToolError('La CLI no guardó el XLSX privado de la operación solicitada.')
+            }
+            const xlsxPath = join(directory, result.filename)
+            await rename(stagingPath, xlsxPath)
+            return { ...result, xlsxPath }
+        } catch (error) {
+            await rm(directory, { recursive: true })
+            throw error
+        }
     }
 }

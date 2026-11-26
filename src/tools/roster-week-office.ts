@@ -1,9 +1,9 @@
 import { execFile } from 'node:child_process'
-import { open, readFile, rm, unlink, writeFile } from 'node:fs/promises'
+import { readFile, rm, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { isDeepStrictEqual, promisify } from 'node:util'
 import type { z } from 'zod'
-import { createOfficeDirectory, privateOfficeFileSize, shellQuote } from './office-files.js'
+import { createOfficeDirectory, matchesPrivateOfficeFile, privateOfficeFileSize, shellQuote } from './office-files.js'
 import { requestId } from './presencia-contract.js'
 import type { OfficeRosterConfig } from './roster-office.js'
 import {
@@ -14,6 +14,7 @@ import {
 const execute = promisify(execFile)
 const maxJsonBytes = 4 << 20
 const maxPdfBytes = 8 << 20
+const pdfHeader = Buffer.from('%PDF-')
 export class RosterWeekToolError extends Error {}
 
 function employeeFlags(ids?: number[]) {
@@ -152,7 +153,7 @@ export class OfficeRosterWeek {
                 'pdf', `--week=${week}`, `--revision=${revision}`, `--output=${pdfPath}`, ...employeeFlags(employeeIds),
             ]))
             if (result.monday !== week || result.revision !== revision || result.filename !== filename ||
-                !await matchesPdf(pdfPath, result.bytes)) {
+                !await matchesPrivateOfficeFile(pdfPath, maxPdfBytes, result.bytes, pdfHeader)) {
                 throw new RosterWeekToolError('El PDF privado no corresponde a la revisión solicitada.')
             }
             retained = true
@@ -166,17 +167,5 @@ export class OfficeRosterWeek {
         const directory = await createOfficeDirectory(this.config.stateDir, prefix)
         if (!directory) throw new RosterWeekToolError('El directorio de cuadrantes debe ser privado y pertenecer al usuario del MCP.')
         return directory
-    }
-}
-
-async function matchesPdf(path: string, size: number) {
-    if (await privateOfficeFileSize(path, maxPdfBytes) !== size) return false
-    const file = await open(path, 'r')
-    try {
-        const header = Buffer.alloc(5)
-        const result = await file.read(header, 0, header.byteLength, 0)
-        return result.bytesRead === header.byteLength && header.toString('ascii') === '%PDF-'
-    } finally {
-        await file.close()
     }
 }

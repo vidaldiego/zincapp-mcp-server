@@ -22,7 +22,11 @@ test('office stdio exposes Presencia reads and proposals alongside the existing 
         'attendance_presencia_correction_preview',
         'attendance_presencia_days_get',
         'attendance_presencia_days_list',
+        'attendance_presencia_export_operation',
+        'attendance_presencia_export_preview',
+        'attendance_presencia_export_xlsx',
         'attendance_presencia_operation',
+        'attendance_presencia_report_summary',
         'attendance_presencia_requests_list',
         'attendance_presencia_resolution_preview',
     ])

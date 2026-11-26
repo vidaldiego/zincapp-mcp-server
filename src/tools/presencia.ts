@@ -2,7 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import {
     assistedPunch, configurationChange, correctionInput, daysFilters, daySubject,
-    employeeId, requestId, requestsFilters, resolutionInput,
+    employeeId, reportFilter, reportRequest, requestId, requestsFilters, resolutionInput,
 } from './presencia-contract.js'
 import { OfficePresencia, PresenciaToolError } from './presencia-office.js'
 
@@ -70,4 +70,24 @@ export function registerOfficePresencia(server: McpServer, presencia: OfficePres
         description: 'Comprueba por UUID el resultado de una operación de Presencia. NOT_OBSERVED indica que aún no consta resultado. La consulta no reenvía el intento.',
         inputSchema: z.object({ requestId }).strict(), annotations: readOnly,
     }, safe(async ({ requestId }: { requestId: string }) => presencia.recover(requestId)))
+
+    server.registerTool('attendance_presencia_report_summary', {
+        description: 'Consulta el resumen de Presencia y sus totales para un periodo inclusivo de hasta 366 días en la zona de la empresa. Puedes indicar empleados y un centro para limitar el ámbito.',
+        inputSchema: reportFilter, annotations: readOnly,
+    }, safe((filter: z.output<typeof reportFilter>) => presencia.report(filter)))
+
+    server.registerTool('attendance_presencia_export_preview', {
+        description: 'Prepara una revisión de exportación XLSX con el UUID, las fechas y el ámbito exactos. Entrega la propuesta privada y el comando para confirmar la huella en la CLI interactiva.',
+        inputSchema: reportRequest, annotations: privateReview,
+    }, safe((input: z.output<typeof reportRequest>) => presencia.previewReport(input)))
+
+    server.registerTool('attendance_presencia_export_operation', {
+        description: 'Consulta una vez el estado de la exportación XLSX por su UUID. Solicita otra consulta sólo cuando la persona lo indique.',
+        inputSchema: z.object({ requestId }).strict(), annotations: readOnly,
+    }, safe(({ requestId }: { requestId: string }) => presencia.reportOperation(requestId)))
+
+    server.registerTool('attendance_presencia_export_xlsx', {
+        description: 'Descarga el XLSX de un UUID ya disponible con el perfil de oficina vigente. Devuelve la ruta de un archivo local privado.',
+        inputSchema: z.object({ requestId }).strict(), annotations: privateReview,
+    }, safe(({ requestId }: { requestId: string }) => presencia.reportXlsx(requestId)))
 }

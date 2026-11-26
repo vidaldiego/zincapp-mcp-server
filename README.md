@@ -54,7 +54,7 @@ La herramienta de importación recibe asignaciones verificadas, con la versión
 exacta del turno. La carga directa de PDF y la autenticación de oficina para
 un MCP remoto se tratan aparte.
 
-## Presencia de RR. HH. (candidato B0–B4)
+## Presencia de RR. HH. (candidato B0–B5)
 
 El candidato de laboratorio usa las mismas variables de oficina
 `ZINCAPP_ROSTER_CLI` y `ZINCAPP_ROSTER_PROFILE`. Fija una versión de
@@ -148,6 +148,43 @@ de CLI `b4-*` apuntando al laboratorio loopback. Usa una semana sin
 publicar con un empleado y un turno autorizados. El recorrido modifica
 el cuadrante sintético, comprueba cancelación y huella alterada, publica
 la semana con sábado pendiente y comprueba el PDF de su revisión.
+
+### Resumen y exportación XLSX
+
+1. Usa `attendance_presencia_report_summary` con `from` y `until` en
+   formato ISO. Las fechas se incluyen y el máximo son 366 días. Puedes
+   acotar el resultado por `employeeIds` y `center`, con `clientId` y
+   `centerId` dentro del mismo objeto. La API aplica los permisos vigentes.
+2. Para pedir un XLSX, usa `attendance_presencia_export_preview` con el
+   mismo filtro y un UUID de operación. Entrega a la persona el
+   `terminalCommand` devuelto para que revise empresa, cuenta, periodo,
+   ámbito y huella, y confirme la solicitud en su CLI interactiva.
+3. Cuando la persona pida comprobar el resultado, usa
+   `attendance_presencia_export_operation` con el UUID. `QUEUED` y
+   `RUNNING` indican que la generación está en curso. `NOT_OBSERVED`
+   indica que todavía no hay recibo. Conserva el UUID para resolver una
+   respuesta ambigua. Cada consulta se hace una vez por acción explícita.
+4. Cuando el estado sea `READY`, `attendance_presencia_export_xlsx`
+   descarga el XLSX con los permisos vigentes. Devuelve `xlsxPath`, la
+   ruta privada de un archivo local con el periodo en el nombre. Puedes
+   retirar los archivos locales cuando dejen de ser necesarios.
+
+Las propuestas y archivos XLSX quedan bajo
+`~/.local/state/zincapp-mcp/office-presencia/`. La prueba de revisión sólo
+está en la propuesta privada que lee la CLI. Usa un UUID distinto al
+cambiar el contenido de una exportación.
+
+### Actualización local desde MCP 1.13.0
+
+Desde el repositorio del candidato, ejecuta `yarn build` y genera el
+paquete de laboratorio con `yarn pack --filename /ruta/al/candidato.tgz`.
+En el proyecto que aloja el servidor MCP, instala ese archivo con
+`yarn add "file:/ruta/al/candidato.tgz"`. Conserva `ZINCAPP_ROSTER_PROFILE`
+y usa en `ZINCAPP_ROSTER_CLI` el binario que incluye
+`attendance presencia report`. Reinicia el servidor MCP y comprueba el
+listado de herramientas. Se conservan los nombres y los argumentos de
+los cuadrantes anteriores durante la transición. Las herramientas nuevas
+de Presencia operan con la misma sesión de oficina.
 
 La activación del candidato en oficina forma parte del corte coordinado.
 La fixture de entrada de las pruebas se obtuvo de las secciones

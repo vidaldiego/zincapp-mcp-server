@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, open } from 'node:fs/promises'
 import { join } from 'node:path'
 
 function ownedByProcess(info: { uid: number }) {
@@ -22,4 +22,16 @@ export async function privateOfficeFileSize(path: string, maxSize: number) {
         return undefined
     }
     return info.size
+}
+
+export async function matchesPrivateOfficeFile(path: string, maxSize: number, expectedSize: number, prefix: Buffer) {
+    if (await privateOfficeFileSize(path, maxSize) !== expectedSize) return false
+    const file = await open(path, 'r')
+    try {
+        const header = Buffer.alloc(prefix.length)
+        const result = await file.read(header, 0, header.length, 0)
+        return result.bytesRead === header.length && header.equals(prefix)
+    } finally {
+        await file.close()
+    }
 }
