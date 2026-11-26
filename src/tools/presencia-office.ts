@@ -27,7 +27,9 @@ function cliFlags(values: Record<string, string | number | undefined>) {
 
 function comparableChange(change: z.output<typeof correctionChange>) {
     if (!('movement' in change)) return change
-    return { ...change, movement: { ...change.movement, at: Date.parse(change.movement.at) } }
+    const normalized = { ...change, movement: { ...change.movement, at: Date.parse(change.movement.at) } }
+    if (!('exit' in change)) return normalized
+    return { ...normalized, exit: { ...change.exit, at: Date.parse(change.exit.at) } }
 }
 
 export class OfficePresencia {

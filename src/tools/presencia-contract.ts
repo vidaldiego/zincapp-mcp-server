@@ -80,7 +80,7 @@ export const day = z.object({
     corrections: z.array(z.object({
         id: requestId, kind: correctionKind, reason, createdAt: timestamp, createdBy: z.string().min(1).nullish(),
         active: z.boolean(), targetPunchId: requestId.nullish(), replacementPunchId: requestId.nullish(),
-        revertedCorrectionId: requestId.nullish(),
+        replacementExitPunchId: requestId.nullish(), revertedCorrectionId: requestId.nullish(),
     }).strict()),
     requests: z.array(dayRequest),
     capabilities: z.object({ correct: z.boolean(), resolve: z.boolean() }).strict(),
@@ -91,12 +91,18 @@ export const requestsPage = z.object({ rows: z.array(dayRequest), nextCursor: cu
 const movement = z.object({
     action, at: z.string().datetime().regex(/T\d{2}:\d{2}:\d{2}(?:\.\d{1,3}0{0,6})?Z$/), place,
 }).strict()
-export const correctionChange = z.discriminatedUnion('kind', [
+const singleMovementChange = z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('ADD'), movement }).strict(),
     z.object({ kind: z.literal('REPLACE'), punchId: requestId, movement }).strict(),
     z.object({ kind: z.literal('VOID'), punchId: requestId }).strict(),
     z.object({ kind: z.literal('REVERT'), revertId: requestId }).strict(),
 ])
+const addClosedDay = z.object({
+    kind: z.literal('ADD'),
+    movement: movement.extend({ action: z.literal('ENTRY') }),
+    exit: movement.extend({ action: z.literal('EXIT') }),
+}).strict()
+export const correctionChange = z.union([singleMovementChange, addClosedDay])
 const changes = z.object({ requestId, expectedRevision: revision, reason }).strict()
 export const correctionInput = changes.extend({ change: correctionChange })
 const resolutionApproval = changes.extend({ decision: z.literal('APPROVED'), change: correctionChange })

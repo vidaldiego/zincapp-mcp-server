@@ -82,7 +82,9 @@ por perfil. El perfil determina la empresa y los permisos vigentes.
 7. `attendance_presencia_correction_preview` prepara una corrección
    `ADD`, `REPLACE`, `VOID` o `REVERT`. Indica persona, fecha lógica,
    motivo, UUID de operación y la revisión del detalle. Los instantes de
-   movimientos se expresan en UTC con precisión de hasta milisegundos.
+   movimientos se expresan en UTC con precisión de hasta milisegundos. En
+   una jornada omitida, `ADD` puede incluir `movement` con `ENTRY` y
+   `exit` con `EXIT`, cada uno con su propio instante y lugar.
 8. `attendance_presencia_resolution_preview` prepara la aprobación o el
    rechazo de una solicitud. Indica `solicitudId`, persona y fecha exactas,
    UUID de operación, revisión de la jornada y motivo. La aprobación

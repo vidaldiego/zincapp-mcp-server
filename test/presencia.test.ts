@@ -21,8 +21,10 @@ const workDate = '2026-11-26'
 const when = '2026-11-26T07:00:00Z'
 const solicitudId = '96c9f542-e0dc-4e47-ba79-68df22c87616'
 const movementId = '196e77b0-8e64-41a9-a723-23280787bb29'
+const exitMovementId = '28f296cc-93ff-4cf4-ac32-fad95218f783'
 const schedule = { kind: 'SHIFT', zone: 'Europe/Madrid', start: when, end: '2026-11-26T15:00:00Z' }
 const movement = { action: 'ENTRY', at: when, place: { kind: 'CENTER', clientId: 0, centerId: 0 } }
+const exitMovement = { action: 'EXIT', at: schedule.end, place: { kind: 'REMOTE' } }
 const correction = {
     requestId, expectedRevision: review.revision, reason: 'Entrada omitida', change: { kind: 'ADD', movement },
 }
@@ -196,11 +198,14 @@ test('lists office days with the exact date, filters and opaque cursor', async t
 test('returns the complete office day for the exact person and logical date', async t => {
     const result = {
         employeeId: 17, name: 'Empleado de prueba', workDate, zone: 'Europe/Madrid', revision: review.revision,
-        status: 'WORKING', schedule, totals: { confirmedMs: 0, provisionalMs: 3600000, breakMs: 0 },
-        movements: [{ id: movementId, ...movement, origin: 'OWN_PUNCH', effective: false }],
+        status: 'CLOSED', schedule, totals: { confirmedMs: 28800000, provisionalMs: 0, breakMs: 0 },
+        movements: [
+            { id: movementId, ...movement, origin: 'CORRECTION', effective: true },
+            { id: exitMovementId, ...exitMovement, origin: 'CORRECTION', effective: true },
+        ],
         corrections: [{
-            id: requestId, kind: 'VOID', reason: 'Movimiento duplicado', createdAt: when, createdBy: 'office-user',
-            active: true, targetPunchId: movementId,
+            id: requestId, kind: 'ADD', reason: 'Jornada omitida', createdAt: when, createdBy: 'office-user',
+            active: true, replacementPunchId: movementId, replacementExitPunchId: exitMovementId,
         }],
         requests: [dayRequest], capabilities: { correct: true, resolve: false },
         placeLabels: [{ clientId: 0, centerId: 0, name: 'Centro principal' }],
@@ -258,7 +263,7 @@ test('prepares a correction privately and exposes the normalized review without 
 })
 
 test('prepares request resolution for the exact request, person and date', async t => {
-    const resolution = { ...correction, decision: 'APPROVED' }
+    const resolution = { ...correction, decision: 'APPROVED', change: { ...correction.change, exit: exitMovement } }
     const reviewed = { ...review, kind: 'REQUEST_RESOLVE', proposal: { ...resolution, solicitudId } }
     const { call, calls } = await setup(t, reviewed, { schemaVersion: 1, identity, review: reviewed })
     const result = await call('resolution_preview', { solicitudId, employeeId: 17, date: workDate, resolution })
@@ -269,6 +274,22 @@ test('prepares request resolution for the exact request, person and date', async
     assert.deepEqual((await calls())[0].args.slice(4, 9),
         ['resolution', 'preview', '--solicitud-id=' + solicitudId, '--employee-id=17', '--date=' + workDate])
     assert.deepEqual((await calls())[0].input, resolution)
+})
+
+test('hands off a single private review for both movements of an omitted day', async t => {
+    const change = { ...correction.change, exit: exitMovement }
+    const proposal = { ...correction, change }
+    const input = { ...proposal, change: { ...change, exit: { ...exitMovement, at: '2026-11-26T15:00:00.000Z' } } }
+    const reviewed = { ...review, kind: 'CORRECTION', proposal }
+    const { call, calls } = await setup(t, reviewed, { schemaVersion: 1, identity, review: reviewed })
+    const result = await call('correction_preview', { employeeId: 17, date: workDate, correction: input })
+    assert.deepEqual(result.data?.review.proposal.change, change)
+    assert.doesNotMatch(JSON.stringify(result), /synthetic-opaque-proof|--yes/)
+    const commandList = await calls()
+    assert.equal(commandList.length, 1)
+    const [command] = commandList
+    assert.equal(command.args[5], 'preview')
+    assert.deepEqual(command.input, input)
 })
 
 test('rejects unsafe or invalid B3 input before invoking the CLI', async t => {
@@ -291,6 +312,16 @@ test('rejects unsafe or invalid B3 input before invoking the CLI', async t => {
             },
         })).error)
     }
+    for (const change of [
+        { kind: 'ADD', movement: { ...movement, action: 'START_BREAK' }, exit: exitMovement },
+        { kind: 'ADD', movement, exit: { ...exitMovement, action: 'ENTRY' } },
+        { kind: 'ADD', movement, exit: { action: 'EXIT', at: exitMovement.at } },
+        { kind: 'REPLACE', punchId: movementId, movement, exit: exitMovement },
+    ]) {
+        assert.ok((await call('correction_preview', {
+            employeeId: 17, date: workDate, correction: { ...correction, change },
+        })).error)
+    }
     const { change, ...withoutChange } = correction
     assert.ok((await call('resolution_preview', {
         solicitudId, employeeId: 17, date: workDate, resolution: { ...withoutChange, decision: 'APPROVED' },
@@ -308,6 +339,19 @@ test('discards a correction whose returned preview changes the movement', async 
     const { call, stateDir } = await setup(t, reviewed, { schemaVersion: 1, identity, review: reviewed })
     const result = await call('correction_preview', { employeeId: 17, date: workDate, correction })
     assert.ok(result.error)
+    assert.doesNotMatch(JSON.stringify(result), /synthetic-opaque-proof/)
+    assert.deepEqual(await readdir(stateDir), [])
+})
+
+test('discards an approval whose returned preview changes the exit of an omitted day', async t => {
+    const resolution = { ...correction, decision: 'APPROVED', change: { ...correction.change, exit: exitMovement } }
+    const reviewed = { ...review, kind: 'REQUEST_RESOLVE', proposal: {
+        ...resolution, solicitudId, change: { ...resolution.change, exit: { ...exitMovement, at: '2026-11-26T16:00:00Z' } },
+    } }
+    const { call, calls, stateDir } = await setup(t, reviewed, { schemaVersion: 1, identity, review: reviewed })
+    const result = await call('resolution_preview', { solicitudId, employeeId: 17, date: workDate, resolution })
+    assert.ok(result.error)
+    assert.equal((await calls()).length, 1)
     assert.doesNotMatch(JSON.stringify(result), /synthetic-opaque-proof/)
     assert.deepEqual(await readdir(stateDir), [])
 })

@@ -56,7 +56,7 @@ export function registerOfficePresencia(server: McpServer, presencia: OfficePres
     }, safe((filters: z.output<typeof requestsFilters>) => presencia.listRequests(filters)))
 
     server.registerTool('attendance_presencia_correction_preview', {
-        description: 'Revisa una corrección ADD, REPLACE, VOID o REVERT en una jornada exacta. Indica un UUID de operación, la revisión del detalle, el motivo y el cambio. Los instantes de los movimientos se indican en UTC. La propuesta privada se confirma en la CLI interactiva.',
+        description: 'Revisa una corrección ADD, REPLACE, VOID o REVERT en una jornada exacta. Para una jornada omitida, ADD admite movement con ENTRY y exit con EXIT. Indica los dos instantes en UTC y sus lugares. La propuesta privada se confirma en la CLI interactiva.',
         inputSchema: correctionPreview, annotations: privateReview,
     }, safe(({ correction, ...subject }: z.output<typeof correctionPreview>) => presencia.previewCorrection(subject, correction)))
 
