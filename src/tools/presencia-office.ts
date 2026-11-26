@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process'
-import { lstat, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises'
+import { readFile, rm, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { isDeepStrictEqual, promisify } from 'node:util'
 import type { z } from 'zod'
+import { createOfficeDirectory, privateOfficeFileSize, shellQuote } from './office-files.js'
 import {
     assistedPunch, configuration, configurationChange, correctionChange, correctionInput, day, daysFilters, daySubject,
     employeeId, officeDays, proposalEnvelope, receipt, requestId, requestsFilters, requestsPage, resolutionInput, review,
@@ -12,14 +13,6 @@ import type { OfficeRosterConfig } from './roster-office.js'
 const execute = promisify(execFile)
 const maxBytes = 4 << 20
 export class PresenciaToolError extends Error {}
-
-function shellQuote(value: string) {
-    return "'" + value.replaceAll("'", "'\"'\"'") + "'"
-}
-
-function ownedByProcess(info: { uid: number }) {
-    return !process.getuid || info.uid === process.getuid()
-}
 
 function cliFlags(values: Record<string, string | number | undefined>) {
     return Object.entries(values).flatMap(([name, value]) => value === undefined ? [] : [`--${name}=${value}`])
@@ -132,13 +125,11 @@ export class OfficePresencia {
         args: string[],
         matches: (reviewed: z.output<typeof review>) => boolean,
     ) {
-        await mkdir(this.config.stateDir, { mode: 0o700, recursive: true })
-        const state = await lstat(this.config.stateDir)
-        if (!state.isDirectory() || !ownedByProcess(state) || (state.mode & 0o077) !== 0) {
+        const directory = await createOfficeDirectory(this.config.stateDir, 'review-')
+        if (!directory) {
             throw new PresenciaToolError('El directorio de propuestas de Presencia debe ser privado y pertenecer al usuario del MCP.')
         }
 
-        const directory = await mkdtemp(join(this.config.stateDir, 'review-'))
         const inputPath = join(directory, 'input.json')
         const proposalPath = join(directory, 'proposal.json')
         try {
@@ -149,8 +140,7 @@ export class OfficePresencia {
             if (reviewed.requestId !== input.requestId || reviewed.proposal.requestId !== input.requestId || !matches(reviewed)) {
                 throw new PresenciaToolError('La revisión de Presencia no coincide con la operación solicitada.')
             }
-            const info = await lstat(proposalPath)
-            if (!info.isFile() || !ownedByProcess(info) || (info.mode & 0o777) !== 0o600 || info.size > maxBytes) {
+            if (await privateOfficeFileSize(proposalPath, maxBytes) === undefined) {
                 throw new PresenciaToolError('La CLI no guardó una propuesta privada de Presencia.')
             }
             const saved = proposalEnvelope.parse(JSON.parse(await readFile(proposalPath, 'utf8')))

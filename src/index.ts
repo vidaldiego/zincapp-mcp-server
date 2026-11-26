@@ -9,6 +9,8 @@ import { registerAllTools } from './tools/index.js'
 import { registerAllResources } from './resources/index.js'
 import { registerOfficeRoster } from './tools/roster.js'
 import { OfficeRoster } from './tools/roster-office.js'
+import { OfficeRosterWeek } from './tools/roster-week-office.js'
+import { registerOfficeRosterWeek } from './tools/roster-week.js'
 import { OfficePresencia } from './tools/presencia-office.js'
 import { registerOfficePresencia } from './tools/presencia.js'
 
@@ -27,6 +29,10 @@ async function main() {
     }
     if (config.roster) {
         registerOfficeRoster(server, new OfficeRoster(config.roster))
+        registerOfficeRosterWeek(server, new OfficeRosterWeek({
+            ...config.roster,
+            stateDir: join(dirname(config.roster.stateDir), 'office-roster-week'),
+        }))
         registerOfficePresencia(server, new OfficePresencia({
             ...config.roster,
             stateDir: join(dirname(config.roster.stateDir), 'office-presencia'),
