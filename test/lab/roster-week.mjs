@@ -43,8 +43,8 @@ async function acceptance() {
         const verb = prepared.review.action === 'PUBLISH' ? 'publish' : 'save'
         const result = spawnSync('python3', ['-c', terminalRunner(), mode, prepared.proposalPath, executable,
             `--profile=${profile}`, 'attendance', 'roster', 'week', verb, `--proposal=${prepared.proposalPath}`],
-        { env, timeout: 35_000, stdio: 'ignore' })
-        assert.equal(result.status, 0, `Interactive CLI failed the synthetic ${mode} scenario`)
+        { env, timeout: 35_000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+        assert.equal(result.status, 0, `Interactive CLI failed the synthetic ${mode} scenario (${result.stdout?.trim() || 'terminal check failed'})`)
     }
     async function tool(name, args) {
         const response = await client.callTool({ name: 'attendance_roster_week_' + name, arguments: args })
@@ -154,7 +154,7 @@ async function acceptance() {
 }
 
 function terminalRunner() {
-    return String.raw`import errno, json, os, pty, select, subprocess, sys, time
+    return String.raw`import errno, json, os, pty, re, select, subprocess, sys, time
 mode, proposal, *command = sys.argv[1:]
 with open(proposal) as file:
     digest = json.load(file)["review"]["digest"]
@@ -165,8 +165,10 @@ transcript = b""
 entered = False
 try:
     deadline = time.monotonic() + 25
-    while time.monotonic() < deadline and child.poll() is None:
+    while time.monotonic() < deadline:
         if not select.select([master], [], [], 0.2)[0]:
+            if child.poll() is not None:
+                break
             continue
         try:
             transcript += os.read(master, 4096)
@@ -178,7 +180,17 @@ try:
             os.write(master, ((digest if mode == "confirm" else "cancel") + "\n").encode())
             entered = True
     status = child.wait(timeout=4)
-    passed = (status == 0 and entered) if mode == "confirm" else (status != 0 and (entered == (mode == "cancel")))
+    cancelled = b"cancelled" in transcript.splitlines()
+    changed = b"roster review or its fingerprint changed" in transcript
+    passed = {
+        "confirm": status == 0 and entered and not cancelled,
+        "cancel": status == 0 and entered and cancelled,
+        "altered": status != 0 and not entered and changed,
+    }[mode]
+    if not passed:
+        http = re.search(rb"\bHTTP ([45][0-9]{2})\b", transcript)
+        print(json.dumps({"exit": status, "prompt": entered, "cancelled": cancelled, "changed": changed,
+                          "http": int(http[1]) if http else None}))
     sys.exit(0 if passed else 1)
 finally:
     os.close(master)
