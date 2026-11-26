@@ -75,7 +75,8 @@ por perfil. El perfil determina la empresa y los permisos vigentes.
    `nextCursor` como `cursor` con los mismos filtros.
 5. `attendance_presencia_days_get` devuelve el detalle de un empleado
    en una fecha lógica ISO. Incluye revisión, movimientos efectivos y
-   rectificados, correcciones, solicitudes y permisos de la persona operadora.
+   rectificados, etiquetas de centros, correcciones, solicitudes y permisos
+   de la persona operadora.
 6. `attendance_presencia_requests_list` consulta solicitudes de ajuste por
    fecha, empleado y estado. Admite el mismo mecanismo de paginación.
 7. `attendance_presencia_correction_preview` prepara una corrección

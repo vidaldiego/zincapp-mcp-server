@@ -84,6 +84,7 @@ export const day = z.object({
     }).strict()),
     requests: z.array(dayRequest),
     capabilities: z.object({ correct: z.boolean(), resolve: z.boolean() }).strict(),
+    placeLabels: z.array(z.object({ ...centerFields, name: z.string().min(1) }).strict()).optional(),
 }).strict()
 export const requestsPage = z.object({ rows: z.array(dayRequest), nextCursor: cursor.nullish() }).strict()
 

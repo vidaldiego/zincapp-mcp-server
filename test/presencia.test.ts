@@ -203,12 +203,24 @@ test('returns the complete office day for the exact person and logical date', as
             active: true, targetPunchId: movementId,
         }],
         requests: [dayRequest], capabilities: { correct: true, resolve: false },
+        placeLabels: [{ clientId: 0, centerId: 0, name: 'Centro principal' }],
     }
     const { call, calls } = await setup(t, result)
     assert.deepEqual(await call('days_get', { employeeId: 17, date: workDate }), { data: result })
     assert.deepEqual((await calls())[0].args.slice(4), ['days', 'get', '--employee-id=17', '--date=' + workDate])
     assert.ok((await call('days_get', { employeeId: 18, date: workDate })).error)
     assert.ok((await call('days_get', { employeeId: 17, date: '2026-11-25' })).error)
+
+    const { placeLabels, ...withoutLabels } = result
+    const older = await setup(t, withoutLabels)
+    assert.deepEqual(await older.call('days_get', { employeeId: 17, date: workDate }), { data: withoutLabels })
+
+    const withExtraData = await setup(t, {
+        ...result, placeLabels: [{ ...placeLabels[0], proof: review.proof }],
+    })
+    const rejected = await withExtraData.call('days_get', { employeeId: 17, date: workDate })
+    assert.ok(rejected.error)
+    assert.doesNotMatch(JSON.stringify(rejected), /synthetic-opaque-proof/)
 })
 
 test('lists office requests through the fixed profile', async t => {

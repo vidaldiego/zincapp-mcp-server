@@ -46,7 +46,7 @@ export function registerOfficePresencia(server: McpServer, presencia: OfficePres
     }, safe((filters: z.output<typeof daysFilters>) => presencia.listDays(filters)))
 
     server.registerTool('attendance_presencia_days_get', {
-        description: 'Consulta la jornada de una persona en una fecha lógica ISO. Incluye horario, movimientos originales y efectivos, correcciones, solicitudes, totales y permisos.',
+        description: 'Consulta la jornada de una persona en una fecha lógica ISO. Incluye horario, movimientos originales y efectivos, etiquetas de centros, correcciones, solicitudes, totales y permisos.',
         inputSchema: daySubject, annotations: readOnly,
     }, safe((subject: z.output<typeof daySubject>) => presencia.getDay(subject)))
 
