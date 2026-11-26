@@ -2,63 +2,12 @@ import { execFile } from 'node:child_process'
 import { lstat, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { isDeepStrictEqual, promisify } from 'node:util'
-import { z } from 'zod'
+import type { z } from 'zod'
+import {
+    assistedPunch, configuration, configurationChange, correctionChange, correctionInput, day, daysFilters, daySubject,
+    employeeId, officeDays, proposalEnvelope, receipt, requestId, requestsFilters, requestsPage, resolutionInput, review,
+} from './presencia-contract.js'
 import type { OfficeRosterConfig } from './roster-office.js'
-
-export const requestId = z.string().uuid().transform(value => value.toLowerCase())
-const identifier = z.number().int().nonnegative().max(2147483647)
-export const employeeId = identifier.min(1)
-const date = z.string().date()
-const timestamp = z.string().datetime({ offset: true })
-const revision = z.string().min(1).max(128)
-const action = z.enum(['ENTRY', 'START_BREAK', 'END_BREAK', 'EXIT'])
-const centerFields = { clientId: identifier, centerId: identifier }
-const place = z.discriminatedUnion('kind', [
-    z.object({ kind: z.literal('CENTER'), ...centerFields }).strict(),
-    z.object({ kind: z.literal('REMOTE') }).strict(),
-])
-const participation = z.object({
-    effectiveFrom: date,
-    mode: z.enum(['SCHEDULED', 'VOLUNTARY', 'INACTIVE']),
-    allowRemote: z.boolean(),
-    requireGps: z.boolean(),
-    centers: z.array(z.object(centerFields).strict()),
-})
-export const configurationChange = participation.extend({ requestId, revision }).strict()
-export const assistedPunch = z.object({
-    requestId, employeeId, action, place, reason: z.string().min(1).max(500),
-}).strict()
-
-const configuration = z.object({
-    employeeId, revision,
-    periods: z.array(participation.extend({ effectiveUntil: date.nullish() }).strict()),
-}).strict()
-const reviewFields = z.object({
-    requestId, employeeId, workDate: date, revision,
-    digest: z.string().regex(/^[0-9a-f]{64}$/),
-    proof: z.string().min(1).max(16384),
-    expiresAt: timestamp,
-})
-const review = z.discriminatedUnion('kind', [
-    reviewFields.extend({ kind: z.literal('CONFIGURE'), proposal: configurationChange }).strict(),
-    reviewFields.extend({ kind: z.literal('ASSISTED_PUNCH'), proposal: assistedPunch }).strict(),
-])
-const proposalEnvelope = z.object({
-    schemaVersion: z.literal(1),
-    identity: z.object({
-        companyId: employeeId, cif: z.string(), userName: z.string(), apiBaseUrl: z.string().url(),
-    }).strict(),
-    review,
-}).strict()
-const receipt = z.object({
-    requestId,
-    outcome: z.enum(['NOT_OBSERVED', 'CONFIRMED', 'REJECTED', 'CANCELLED']),
-    kind: z.enum(['CONFIGURE', 'ASSISTED_PUNCH', 'OWN_PUNCH']).nullish(),
-    code: z.string().nullish(),
-    employeeId: employeeId.nullish(),
-    workDate: date.nullish(),
-    punch: z.object({ action, at: timestamp }).strict().nullish(),
-}).strict()
 
 const execute = promisify(execFile)
 const maxBytes = 4 << 20
@@ -72,15 +21,24 @@ function ownedByProcess(info: { uid: number }) {
     return !process.getuid || info.uid === process.getuid()
 }
 
+function cliFlags(values: Record<string, string | number | undefined>) {
+    return Object.entries(values).flatMap(([name, value]) => value === undefined ? [] : [`--${name}=${value}`])
+}
+
+function comparableChange(change: z.output<typeof correctionChange>) {
+    if (!('movement' in change)) return change
+    return { ...change, movement: { ...change.movement, at: Date.parse(change.movement.at) } }
+}
+
 export class OfficePresencia {
     constructor(private readonly config: OfficeRosterConfig) {}
 
-    private async command(group: 'configuration' | 'assist' | 'operation', verb: 'get' | 'preview', args: string[]) {
+    private async command(args: string[]) {
         const env = { ...process.env }
         delete env.ZINCAPP_AGENT_TOKEN
         try {
             const { stdout } = await execute(this.config.executable, [
-                `--profile=${this.config.profile}`, '--json', 'attendance', 'presencia', group, verb, ...args,
+                `--profile=${this.config.profile}`, '--json', 'attendance', 'presencia', ...args,
             ], { env, timeout: 45_000, maxBuffer: maxBytes })
             return JSON.parse(stdout) as unknown
         } catch (error) {
@@ -93,26 +51,84 @@ export class OfficePresencia {
 
     async getConfiguration(id: number) {
         const employee = employeeId.parse(id)
-        const result = configuration.parse(await this.command('configuration', 'get', [`--employee-id=${employee}`]))
+        const result = configuration.parse(await this.command(['configuration', 'get', `--employee-id=${employee}`]))
         if (result.employeeId !== employee) throw new PresenciaToolError('La configuración corresponde a otra persona.')
         return result
     }
 
     previewConfiguration(id: number, change: z.input<typeof configurationChange>) {
         const employee = employeeId.parse(id)
-        return this.preview('configuration', employee, configurationChange.parse(change), [`--employee-id=${employee}`])
+        return this.preview('configuration', configurationChange.parse(change), [`--employee-id=${employee}`],
+            reviewed => reviewed.kind === 'CONFIGURE' && reviewed.employeeId === employee)
     }
 
     previewAssist(punch: z.input<typeof assistedPunch>) {
         const input = assistedPunch.parse(punch)
-        return this.preview('assist', input.employeeId, input, [])
+        return this.preview('assist', input, [], reviewed =>
+            reviewed.kind === 'ASSISTED_PUNCH' && reviewed.employeeId === input.employeeId &&
+            reviewed.proposal.employeeId === input.employeeId)
+    }
+
+    async listDays(filters: z.input<typeof daysFilters>) {
+        const { date, q, clientId, centerId, view, status, cursor, limit } = daysFilters.parse(filters)
+        if ((clientId === undefined) !== (centerId === undefined)) {
+            throw new PresenciaToolError('Indica clientId y centerId juntos para filtrar por centro.')
+        }
+        const result = officeDays.parse(await this.command(['days', 'list', ...cliFlags({
+            date, q, 'client-id': clientId, 'center-id': centerId, view, status, cursor, limit,
+        })]))
+        if (date !== undefined && result.date !== date) {
+            throw new PresenciaToolError('El listado de Presencia corresponde a otra fecha.')
+        }
+        return result
+    }
+
+    async getDay(subject: z.input<typeof daySubject>) {
+        const { employeeId, date } = daySubject.parse(subject)
+        const result = day.parse(await this.command(['days', 'get', ...cliFlags({ 'employee-id': employeeId, date })]))
+        if (result.employeeId !== employeeId || result.workDate !== date) {
+            throw new PresenciaToolError('La jornada de Presencia corresponde a otra persona o fecha.')
+        }
+        return result
+    }
+
+    async listRequests(filters: z.input<typeof requestsFilters>) {
+        const { date, employeeId, status, cursor, limit } = requestsFilters.parse(filters)
+        return requestsPage.parse(await this.command(['requests', 'list', ...cliFlags({
+            date, 'employee-id': employeeId, status, cursor, limit,
+        })]))
+    }
+
+    previewCorrection(subject: z.input<typeof daySubject>, correction: z.input<typeof correctionInput>) {
+        const { employeeId, date } = daySubject.parse(subject)
+        const input = correctionInput.parse(correction)
+        return this.preview('correction', input, cliFlags({ 'employee-id': employeeId, date }), reviewed =>
+            reviewed.kind === 'CORRECTION' && reviewed.employeeId === employeeId && reviewed.workDate === date &&
+            reviewed.revision === input.expectedRevision && reviewed.proposal.expectedRevision === input.expectedRevision &&
+            isDeepStrictEqual(comparableChange(reviewed.proposal.change), comparableChange(input.change)))
+    }
+
+    previewResolution(id: string, subject: z.input<typeof daySubject>, resolution: z.input<typeof resolutionInput>) {
+        const solicitudId = requestId.parse(id)
+        const { employeeId, date } = daySubject.parse(subject)
+        const input = resolutionInput.parse(resolution)
+        return this.preview('resolution', input, cliFlags({ 'solicitud-id': solicitudId, 'employee-id': employeeId, date }), reviewed => {
+            if (reviewed.kind !== 'REQUEST_RESOLVE' || reviewed.employeeId !== employeeId ||
+                reviewed.workDate !== date || reviewed.revision !== input.expectedRevision ||
+                reviewed.proposal.expectedRevision !== input.expectedRevision || reviewed.proposal.solicitudId !== solicitudId) {
+                return false
+            }
+            if (input.decision === 'REJECTED') return reviewed.proposal.decision === 'REJECTED'
+            return reviewed.proposal.decision === 'APPROVED' &&
+                isDeepStrictEqual(comparableChange(reviewed.proposal.change), comparableChange(input.change))
+        })
     }
 
     private async preview(
-        group: 'configuration' | 'assist',
-        employee: number,
-        input: z.output<typeof configurationChange> | z.output<typeof assistedPunch>,
+        group: 'configuration' | 'assist' | 'correction' | 'resolution',
+        input: { requestId: string },
         args: string[],
+        matches: (reviewed: z.output<typeof review>) => boolean,
     ) {
         await mkdir(this.config.stateDir, { mode: 0o700, recursive: true })
         const state = await lstat(this.config.stateDir)
@@ -125,13 +141,10 @@ export class OfficePresencia {
         const proposalPath = join(directory, 'proposal.json')
         try {
             await writeFile(inputPath, JSON.stringify(input), { mode: 0o600, flag: 'wx' })
-            const reviewed = review.parse(await this.command(group, 'preview', [
-                ...args, `--input=${inputPath}`, `--output=${proposalPath}`,
+            const reviewed = review.parse(await this.command([
+                group, 'preview', ...args, `--input=${inputPath}`, `--output=${proposalPath}`,
             ]))
-            const expectedKind = group === 'configuration' ? 'CONFIGURE' : 'ASSISTED_PUNCH'
-            if (reviewed.kind !== expectedKind || reviewed.requestId !== input.requestId ||
-                reviewed.proposal.requestId !== input.requestId || reviewed.employeeId !== employee ||
-                (reviewed.kind === 'ASSISTED_PUNCH' && reviewed.proposal.employeeId !== employee)) {
+            if (reviewed.requestId !== input.requestId || reviewed.proposal.requestId !== input.requestId || !matches(reviewed)) {
                 throw new PresenciaToolError('La revisión de Presencia no coincide con la operación solicitada.')
             }
             const info = await lstat(proposalPath)
@@ -158,7 +171,7 @@ export class OfficePresencia {
 
     async recover(id: string) {
         const uuid = requestId.parse(id)
-        const result = receipt.parse(await this.command('operation', 'get', [`--request-id=${uuid}`]))
+        const result = receipt.parse(await this.command(['operation', 'get', `--request-id=${uuid}`]))
         if (result.requestId !== uuid) throw new PresenciaToolError('El recibo corresponde a otra operación de Presencia.')
         return result
     }

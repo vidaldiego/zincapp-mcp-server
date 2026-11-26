@@ -54,7 +54,7 @@ La herramienta de importación recibe asignaciones verificadas, con la versión
 exacta del turno. La carga directa de PDF y la autenticación de oficina para
 un MCP remoto se tratan aparte.
 
-## Presencia de RR. HH. (candidato B0–B2)
+## Presencia de RR. HH. (candidato B0–B3)
 
 El candidato de laboratorio usa las mismas variables de oficina
 `ZINCAPP_ROSTER_CLI` y `ZINCAPP_ROSTER_PROFILE`. Fija una versión de
@@ -69,6 +69,23 @@ por perfil. El perfil determina la empresa y los permisos vigentes.
 3. `attendance_presencia_assist_preview` prepara un fichaje asistido. Indica
    empleado, acción, centro o remoto y motivo. La hora la fija el servidor
    al aplicar. Usa un UUID por intento y consérvalo para comprobar su resultado.
+4. `attendance_presencia_days_list` lista jornadas y totales por estado
+   con filtros de fecha, búsqueda, centro administrativo, vista y estado.
+   El centro se indica con `clientId` y `centerId`. Para otra página usa
+   `nextCursor` como `cursor` con los mismos filtros.
+5. `attendance_presencia_days_get` devuelve el detalle de un empleado
+   en una fecha lógica ISO. Incluye revisión, movimientos efectivos y
+   rectificados, correcciones, solicitudes y permisos de la persona operadora.
+6. `attendance_presencia_requests_list` consulta solicitudes de ajuste por
+   fecha, empleado y estado. Admite el mismo mecanismo de paginación.
+7. `attendance_presencia_correction_preview` prepara una corrección
+   `ADD`, `REPLACE`, `VOID` o `REVERT`. Indica persona, fecha lógica,
+   motivo, UUID de operación y la revisión del detalle. Los instantes de
+   movimientos se expresan en UTC con precisión de hasta milisegundos.
+8. `attendance_presencia_resolution_preview` prepara la aprobación o el
+   rechazo de una solicitud. Indica `solicitudId`, persona y fecha exactas,
+   UUID de operación, revisión de la jornada y motivo. La aprobación
+   incluye el cambio auditado.
 
 La respuesta de cada vista previa muestra persona, empresa, cuenta, propuesta
 normalizada, fecha, revisión, huella y vencimiento. El archivo
