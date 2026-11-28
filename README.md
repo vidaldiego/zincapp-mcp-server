@@ -174,6 +174,21 @@ Las propuestas y archivos XLSX quedan bajo
 está en la propuesta privada que lee la CLI. Usa un UUID distinto al
 cambiar el contenido de una exportación.
 
+### Archivo histórico
+
+1. Usa `attendance_presencia_archive_list` con `employeeId`, `from` y
+   `until`. Las fechas se incluyen y pueden distar hasta 366 días.
+   Conserva el mismo empleado y periodo al pedir otra página con `cursor`.
+2. Consulta la fecha concreta con `attendance_presencia_archive_day`.
+   El registro clásico muestra movimientos y resumen. Una jornada con
+   evidencias firmadas lista los originales disponibles.
+3. Descarga un original con `attendance_presencia_archive_original`,
+   indicando el empleado, la fecha, `kind` (`RECEIPT` o `DECISION`) y
+   `originalId`. La API verifica los permisos de oficina vigentes.
+   El MCP devuelve metadatos y `originalPath`, la ruta de un archivo
+   local privado verificado por SHA-256. Mantén ese archivo bajo
+   custodia autorizada mientras sea necesario.
+
 ### Actualización local desde MCP 1.13.0
 
 Desde el repositorio del candidato, ejecuta `yarn build` y genera el
@@ -181,7 +196,7 @@ paquete de laboratorio con `yarn pack --filename /ruta/al/candidato.tgz`.
 En el proyecto que aloja el servidor MCP, instala ese archivo con
 `yarn add "file:/ruta/al/candidato.tgz"`. Conserva `ZINCAPP_ROSTER_PROFILE`
 y usa en `ZINCAPP_ROSTER_CLI` el binario que incluye
-`attendance presencia report`. Reinicia el servidor MCP y comprueba el
+`attendance presencia report` y `attendance presencia archive`. Reinicia el servidor MCP y comprueba el
 listado de herramientas. Se conservan los nombres y los argumentos de
 los cuadrantes anteriores durante la transición. Las herramientas nuevas
 de Presencia operan con la misma sesión de oficina.

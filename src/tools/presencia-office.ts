@@ -3,8 +3,9 @@ import { readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { isDeepStrictEqual, promisify } from 'node:util'
 import type { z } from 'zod'
-import { createOfficeDirectory, matchesPrivateOfficeFile, privateOfficeFileSize, shellQuote } from './office-files.js'
+import { createOfficeDirectory, matchesPrivateOfficeDigest, matchesPrivateOfficeFile, privateOfficeFileSize, shellQuote } from './office-files.js'
 import {
+    archiveDay, archiveFilter, archiveOriginalFile, archiveOriginalInput, archivePage, archiveSubject,
     assistedPunch, configuration, configurationChange, correctionChange, correctionInput, day, daysFilters, daySubject,
     employeeId, officeDays, proposalEnvelope, receipt, reportEnvelope, reportFilter, reportReceipt, reportRequest,
     reportReview, reportSummary, reportXlsx, requestId, requestsFilters, requestsPage, resolutionInput, review,
@@ -99,6 +100,64 @@ export class OfficePresencia {
             throw new PresenciaToolError('La jornada de Presencia corresponde a otra persona o fecha.')
         }
         return result
+    }
+
+    async listArchive(filters: z.input<typeof archiveFilter>) {
+        const { employeeId, from, until, cursor, limit } = archiveFilter.parse(filters)
+        const days = (Date.parse(until) - Date.parse(from)) / 86_400_000
+        if (days < 0 || days > 366) {
+            throw new PresenciaToolError('Indica fechas ordenadas con una diferencia máxima de 366 días.')
+        }
+        const page = archivePage.parse(await this.command([
+            'archive', 'list', ...cliFlags({ 'employee-id': employeeId, from, until, cursor, limit }),
+        ]))
+        const pageSize = limit ?? 20
+        if (page.employeeId !== employeeId || page.days.length > pageSize ||
+            page.nextCursor && (page.nextCursor === cursor || page.days.length !== pageSize) ||
+            page.days.some((day, i) => day.workDate < from || day.workDate > until ||
+                i > 0 && day.workDate >= page.days[i - 1].workDate)) {
+            throw new PresenciaToolError('El archivo de Presencia no coincide con la página solicitada.')
+        }
+        return page
+    }
+
+    async getArchiveDay(subject: z.input<typeof archiveSubject>) {
+        const { employeeId, date } = archiveSubject.parse(subject)
+        const detail = archiveDay.parse(await this.command(['archive', 'day', ...cliFlags({ 'employee-id': employeeId, date })]))
+        const originals = new Set(detail.originals.map(item => item.kind + ':' + item.id))
+        const movements = detail.classic?.movements ?? []
+        if (detail.employeeId !== employeeId || detail.day.workDate !== date ||
+            detail.day.originalCount !== detail.originals.length || originals.size !== detail.originals.length ||
+            (detail.classic !== undefined) !== (detail.day.originalCount === 0) ||
+            new Set(movements.map(item => item.punchId)).size !== movements.length) {
+            throw new PresenciaToolError('El archivo de Presencia no coincide con la jornada solicitada.')
+        }
+        return detail
+    }
+
+    async downloadArchiveOriginal(input: z.input<typeof archiveOriginalInput>) {
+        const { employeeId, date, kind, originalId } = archiveOriginalInput.parse(input)
+        const directory = await createOfficeDirectory(this.config.stateDir, 'original-')
+        if (!directory) throw new PresenciaToolError('El directorio de originales de Presencia debe ser privado y pertenecer al usuario del MCP.')
+
+        try {
+            const stagingPath = join(directory, 'original.json')
+            const result = archiveOriginalFile.parse(await this.command(['archive', 'original', ...cliFlags({
+                'employee-id': employeeId, date, kind, 'original-id': originalId, output: stagingPath,
+            })]))
+            const filename = kind.toLowerCase() + '-' + originalId + '.json'
+            if (result.employeeId !== employeeId || result.date !== date || result.kind !== kind ||
+                result.id !== originalId || result.filename !== filename ||
+                !await matchesPrivateOfficeDigest(stagingPath, result.bytes, result.sha256)) {
+                throw new PresenciaToolError('La CLI no guardó un original privado válido para la jornada solicitada.')
+            }
+            const originalPath = join(directory, filename)
+            await rename(stagingPath, originalPath)
+            return { ...result, originalPath }
+        } catch (error) {
+            await rm(directory, { recursive: true })
+            throw error
+        }
     }
 
     async listRequests(filters: z.input<typeof requestsFilters>) {

@@ -178,3 +178,48 @@ export const reportReceipt = z.object({
 export const reportXlsx = z.object({
     requestId, filename: z.string().regex(/^presencia-\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}\.xlsx$/), bytes: count.positive(),
 }).strict()
+
+const archiveCursor = z.string().min(1).max(4096)
+const archiveKind = z.enum(['RECEIPT', 'DECISION'])
+const archiveSHA256 = z.string().regex(/^[a-f0-9]{64}$/)
+const archiveUUID = z.string().regex(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/)
+export const maxArchiveOriginalBytes = 128 << 10
+const archivedDay = z.object({
+    workDate: reportDate, originalCount: z.union([z.literal(0), z.number().int().min(2).max(1024)]),
+}).strict()
+const archivedOriginal = z.object({
+    kind: archiveKind, id: archiveUUID, eventId: archiveUUID, keyId: archiveUUID, sha256: archiveSHA256,
+    revision: z.string().regex(/^[1-9][0-9]{0,19}$/), origin: z.enum(['TERMINAL', 'EMPLOYEE', 'MANUAL']),
+}).strict()
+
+export const archiveFilter = z.object({
+    employeeId, from: reportDate, until: reportDate, cursor: archiveCursor.optional(), limit: z.number().int().min(1).max(100).optional(),
+}).strict()
+export const archiveSubject = z.object({ employeeId, date: reportDate }).strict()
+export const archiveOriginalInput = archiveSubject.extend({ kind: archiveKind, originalId: requestId })
+export const archivePage = z.object({
+    employeeId, days: z.array(archivedDay).max(100), nextCursor: archiveCursor.nullish(),
+}).strict()
+
+const archiveTime = z.string().max(32).nullable()
+const archiveText = z.string().max(64).nullable()
+const archiveCenter = z.object(centerFields).strict()
+const classicMovement = z.object({
+    punchId: z.number().int().safe(), civilTime: archiveTime, occurredAtUtc: archiveTime, action: archiveText, method: archiveText,
+    effective: z.boolean(), originalPunchId: z.number().int().safe().nullable(), correctedBy: archiveText,
+    ruleCenter: archiveCenter, observedCenter: archiveCenter,
+    audit: z.object({ createdBy: archiveText, createdAt: archiveTime, updatedBy: archiveText, updatedAt: archiveTime }).strict(),
+}).strict()
+const classicSummary = z.object({
+    firstClockIn: archiveTime, lastClockOut: archiveTime, totalWorkMins: z.number().int(), totalBreakMins: z.number().int(),
+    effectiveMins: z.number().int(), expectedMins: z.number().int(), deviationMins: z.number().int(),
+    status: z.string().max(64), punches: z.number().int(),
+}).strict()
+export const archiveDay = z.object({
+    employeeId, day: archivedDay, originals: z.array(archivedOriginal).max(1024),
+    classic: z.object({ movements: z.array(classicMovement).max(2048), summary: classicSummary }).strict().optional(),
+}).strict()
+export const archiveOriginalFile = archiveSubject.extend({
+    kind: archiveKind, id: archiveUUID, filename: z.string(), bytes: z.number().int().min(1).max(maxArchiveOriginalBytes),
+    sha256: archiveSHA256,
+})
