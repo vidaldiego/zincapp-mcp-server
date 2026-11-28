@@ -264,6 +264,13 @@ test('lists the typed imported proposal and rejects private original fields', as
     assert.doesNotMatch(JSON.stringify(rejected), /synthetic-opaque-proof/)
 })
 
+test('reads withdrawn employee requests from the fixed office profile', async t => {
+    const result = { rows: [{ ...dayRequest, status: 'WITHDRAWN', resolvedAt: '2026-11-26T09:00:00Z' }] }
+    const { call, calls } = await setup(t, result)
+    assert.deepEqual(await call('requests_list', { status: 'WITHDRAWN' }), { data: result })
+    assert.ok((await calls())[0].args.includes('--status=WITHDRAWN'))
+})
+
 test('prepares a correction privately and exposes the normalized review without the proof', async t => {
     const input = { ...correction, reason: ' Entrada omitida ', change: {
         kind: 'ADD', movement: { ...movement, at: '2026-11-26T07:00:00.000000000Z' },
