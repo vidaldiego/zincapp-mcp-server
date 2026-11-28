@@ -8,8 +8,9 @@ const timestamp = z.string().datetime({ offset: true })
 const revision = z.string().min(1).max(128)
 const action = z.enum(['ENTRY', 'START_BREAK', 'END_BREAK', 'EXIT'])
 const centerFields = { clientId: identifier, centerId: identifier }
+const centerPlace = z.object({ kind: z.literal('CENTER'), ...centerFields }).strict()
 const place = z.discriminatedUnion('kind', [
-    z.object({ kind: z.literal('CENTER'), ...centerFields }).strict(),
+    centerPlace,
     z.object({ kind: z.literal('REMOTE') }).strict(),
 ])
 const participation = z.object({
@@ -43,9 +44,15 @@ const schedule = z.object({
     zone, start: timestamp.nullish(), end: timestamp.nullish(),
 }).strict()
 const punch = z.object({ action, at: timestamp }).strict()
+const movement = z.object({
+    action, at: z.string().datetime().regex(/T\d{2}:\d{2}:\d{2}(?:\.\d{1,3}0{0,6})?Z$/), place,
+}).strict()
+const importedProposal = z.object({
+    kind: z.literal('ADD'), movement: movement.extend({ action: z.enum(['ENTRY', 'EXIT']), place: centerPlace }),
+}).strict()
 const dayRequest = z.object({
     id: requestId, employeeId, workDate: date, reason, createdAt: timestamp, status: requestStatus,
-    resolvedAt: timestamp.nullish(), resolutionReason: reason.nullish(),
+    resolvedAt: timestamp.nullish(), resolutionReason: reason.nullish(), proposedChange: importedProposal.optional(),
 }).strict()
 
 export const daySubject = z.object({ employeeId, date }).strict()
@@ -89,9 +96,6 @@ export const day = z.object({
 }).strict()
 export const requestsPage = z.object({ rows: z.array(dayRequest), nextCursor: cursor.nullish() }).strict()
 
-const movement = z.object({
-    action, at: z.string().datetime().regex(/T\d{2}:\d{2}:\d{2}(?:\.\d{1,3}0{0,6})?Z$/), place,
-}).strict()
 const singleMovementChange = z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('ADD'), movement }).strict(),
     z.object({ kind: z.literal('REPLACE'), punchId: requestId, movement }).strict(),

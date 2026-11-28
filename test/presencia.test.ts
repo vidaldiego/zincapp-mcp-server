@@ -252,6 +252,18 @@ test('lists office requests through the fixed profile', async t => {
     ], input: null }])
 })
 
+test('lists the typed imported proposal and rejects private original fields', async t => {
+    const proposedChange = { kind: 'ADD', movement: { ...movement, at: '2026-11-26T07:00:04.123Z' } }
+    const result = { rows: [{ ...dayRequest, proposedChange }] }
+    const accepted = await setup(t, result)
+    assert.deepEqual(await accepted.call('requests_list', {}), { data: result })
+
+    const invalid = await setup(t, { rows: [{ ...dayRequest, proposedChange: { ...proposedChange, proof: review.proof } }] })
+    const rejected = await invalid.call('requests_list', {})
+    assert.ok(rejected.error)
+    assert.doesNotMatch(JSON.stringify(rejected), /synthetic-opaque-proof/)
+})
+
 test('prepares a correction privately and exposes the normalized review without the proof', async t => {
     const input = { ...correction, reason: ' Entrada omitida ', change: {
         kind: 'ADD', movement: { ...movement, at: '2026-11-26T07:00:00.000000000Z' },
