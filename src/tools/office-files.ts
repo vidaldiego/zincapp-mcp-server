@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import { constants } from 'node:fs'
 import { lstat, mkdir, mkdtemp, open } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -31,6 +33,25 @@ export async function matchesPrivateOfficeFile(path: string, maxSize: number, ex
         const header = Buffer.alloc(prefix.length)
         const result = await file.read(header, 0, header.length, 0)
         return result.bytesRead === header.length && header.equals(prefix)
+    } finally {
+        await file.close()
+    }
+}
+
+export async function matchesPrivateOfficeDigest(path: string, size: number, sha256: string) {
+    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    try {
+        const info = await file.stat()
+        if (!info.isFile() || !ownedByProcess(info) || (info.mode & 0o777) !== 0o600 || info.size !== size) return false
+
+        const bytes = Buffer.alloc(size + 1)
+        let received = 0
+        while (received < bytes.length) {
+            const { bytesRead } = await file.read(bytes, received, bytes.length - received, received)
+            if (bytesRead === 0) break
+            received += bytesRead
+        }
+        return received === size && createHash('sha256').update(bytes.subarray(0, received)).digest('hex') === sha256
     } finally {
         await file.close()
     }

@@ -16,6 +16,9 @@ test('office stdio exposes Presencia reads and proposals alongside the existing 
     const { tools } = await client.listTools()
     const names = tools.map(tool => tool.name)
     assert.deepEqual(names.filter(name => name.startsWith('attendance_presencia_')).sort(), [
+        'attendance_presencia_archive_day',
+        'attendance_presencia_archive_list',
+        'attendance_presencia_archive_original',
         'attendance_presencia_assist_preview',
         'attendance_presencia_configuration_get',
         'attendance_presencia_configuration_preview',

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -32,14 +33,14 @@ const dayRequest = {
     id: solicitudId, employeeId: 17, workDate, reason: 'Falta la entrada', createdAt: when, status: 'PENDING',
 }
 
-async function setup(t: TestContext, response: unknown, envelope?: unknown, cliError?: string, artifact?: Buffer) {
+async function setup(t: TestContext, response: unknown, envelope?: unknown, cliError?: string, artifact?: Buffer, artifactShape?: 'symlink' | 'public') {
     const directory = await mkdtemp(join(tmpdir(), "zincapp-presencia-'"))
     t.after(() => rm(directory, { recursive: true }))
     const executable = join(directory, 'zincapi')
     const stateDir = join(directory, 'presencia')
     const callsPath = join(directory, 'calls')
     const fakeCLI = `#!${process.execPath}
-const { appendFileSync, readFileSync, writeFileSync } = require('node:fs')
+const { appendFileSync, readFileSync, symlinkSync, writeFileSync } = require('node:fs')
 const args = process.argv.slice(2)
 const flag = name => args.find(arg => arg.startsWith('--' + name + '='))?.slice(name.length + 3)
 const input = flag('input') ? JSON.parse(readFileSync(flag('input'), 'utf8')) : null
@@ -52,7 +53,15 @@ if (error) {
 const envelope = ${JSON.stringify(envelope ?? null)}
 const artifact = ${JSON.stringify(artifact?.toString('base64') ?? null)}
 if (flag('output') && (envelope || artifact)) {
-    writeFileSync(flag('output'), artifact ? Buffer.from(artifact, 'base64') : JSON.stringify(envelope), { mode: 0o600, flag: 'wx' })
+    const shape = ${JSON.stringify(artifactShape ?? null)}
+    const path = flag('output')
+    const bytes = artifact ? Buffer.from(artifact, 'base64') : JSON.stringify(envelope)
+    if (shape === 'symlink') {
+        writeFileSync(path + '.other', bytes, { mode: 0o600, flag: 'wx' })
+        symlinkSync(path + '.other', path)
+    } else {
+        writeFileSync(path, bytes, { mode: shape === 'public' ? 0o644 : 0o600, flag: 'wx' })
+    }
 }
 console.log(JSON.stringify(${JSON.stringify(response)}))
 `
@@ -241,6 +250,25 @@ test('lists office requests through the fixed profile', async t => {
         '--profile=trusted-office', '--json', 'attendance', 'presencia', 'requests', 'list',
         '--date=' + workDate, '--employee-id=17', '--status=PENDING', '--limit=1',
     ], input: null }])
+})
+
+test('lists the typed imported proposal and rejects private original fields', async t => {
+    const proposedChange = { kind: 'ADD', movement: { ...movement, at: '2026-11-26T07:00:04.123Z' } }
+    const result = { rows: [{ ...dayRequest, proposedChange }] }
+    const accepted = await setup(t, result)
+    assert.deepEqual(await accepted.call('requests_list', {}), { data: result })
+
+    const invalid = await setup(t, { rows: [{ ...dayRequest, proposedChange: { ...proposedChange, proof: review.proof } }] })
+    const rejected = await invalid.call('requests_list', {})
+    assert.ok(rejected.error)
+    assert.doesNotMatch(JSON.stringify(rejected), /synthetic-opaque-proof/)
+})
+
+test('reads withdrawn employee requests from the fixed office profile', async t => {
+    const result = { rows: [{ ...dayRequest, status: 'WITHDRAWN', resolvedAt: '2026-11-26T09:00:00Z' }] }
+    const { call, calls } = await setup(t, result)
+    assert.deepEqual(await call('requests_list', { status: 'WITHDRAWN' }), { data: result })
+    assert.ok((await calls())[0].args.includes('--status=WITHDRAWN'))
 })
 
 test('prepares a correction privately and exposes the normalized review without the proof', async t => {
@@ -516,4 +544,74 @@ test('makes unfinished or denied XLSX download a single explicit failure without
     assert.doesNotMatch(error ?? '', /sensitive/)
     assert.equal((await calls()).length, 1)
     assert.deepEqual(await readdir(stateDir), [])
+})
+
+const archiveDate = '2026-10-27'
+const archiveSubject = { employeeId: 17, date: archiveDate }
+const originalBytes = Buffer.from('{"receipt":"synthetic signed original"}')
+const originalMetadata = {
+    ...archiveSubject, kind: 'RECEIPT', id: requestId, filename: 'receipt-' + requestId + '.json',
+    bytes: originalBytes.length, sha256: createHash('sha256').update(originalBytes).digest('hex'),
+}
+const originalInput = { ...archiveSubject, kind: 'RECEIPT', originalId: requestId }
+
+test('lists archived days under the fixed office profile and bounds a cursor to the selected period', async t => {
+    const page = { employeeId: 17, days: [{ workDate: archiveDate, originalCount: 0 }], nextCursor: 'next.cursor' }
+    const { call, calls } = await setup(t, page)
+    const scope = { employeeId: 17, from: archiveDate, until: archiveDate, cursor: 'first.cursor', limit: 1 }
+    assert.deepEqual(await call('archive_list', scope), { data: page })
+    assert.ok((await call('archive_list', { ...scope, until: '2028-11-01' })).error)
+    assert.ok((await call('archive_list', { ...scope, profile: 'other' })).error)
+    assert.deepEqual(await calls(), [{ args: [
+        '--profile=trusted-office', '--json', 'attendance', 'presencia', 'archive', 'list',
+        '--employee-id=17', '--from=' + archiveDate, '--until=' + archiveDate, '--cursor=first.cursor', '--limit=1',
+    ], input: null }])
+    assert.ok((await call('archive_list', { ...scope, employeeId: 18 })).error)
+})
+
+test('reads exactly one classic day and rejects unclassified detail', async t => {
+    const classic = {
+        employeeId: 17, day: { workDate: archiveDate, originalCount: 0 }, originals: [],
+        classic: { movements: [], summary: {
+            firstClockIn: null, lastClockOut: null, totalWorkMins: 0, totalBreakMins: 0,
+            effectiveMins: 0, expectedMins: 0, deviationMins: 0, status: 'MISSING', punches: 0,
+        } },
+    }
+    const { call, calls } = await setup(t, classic)
+    assert.deepEqual(await call('archive_day', archiveSubject), { data: classic })
+    assert.ok((await call('archive_day', { ...archiveSubject, date: '2026-10-28' })).error)
+    assert.deepEqual((await calls()).map(call => call.args.slice(4, 6)), [['archive', 'day'], ['archive', 'day']])
+    const unexpected = await setup(t, { ...classic, classic: { ...classic.classic, gps: { latitude: 12 } } })
+    assert.ok((await unexpected.call('archive_day', archiveSubject)).error)
+})
+
+test('returns only metadata and a path for a private exact archive original', async t => {
+    const { call, calls, stateDir } = await setup(t, originalMetadata, undefined, undefined, originalBytes)
+    const { originalPath, ...metadata } = (await call('archive_original', originalInput)).data
+    assert.deepEqual(metadata, originalMetadata)
+    assert.ok(originalPath.startsWith(stateDir))
+    assert.equal((await lstat(originalPath)).mode & 0o777, 0o600)
+    assert.equal((await lstat(dirname(originalPath))).mode & 0o777, 0o700)
+    assert.deepEqual(await readFile(originalPath), originalBytes)
+    assert.doesNotMatch(JSON.stringify(metadata), /synthetic signed original/)
+    assert.deepEqual((await calls()).map(call => call.args.slice(4, 10)), [[
+        'archive', 'original', '--employee-id=17', '--date=' + archiveDate, '--kind=RECEIPT', '--original-id=' + requestId,
+    ]])
+})
+
+test('removes failed attempts after a wrong subject, digest, symlink, file mode or denied download', async t => {
+    for (const [result, bytes, error, shape] of [
+        [{ ...originalMetadata, employeeId: 18 }, originalBytes, undefined, undefined],
+        [{ ...originalMetadata, filename: '../outside.json' }, originalBytes, undefined, undefined],
+        [originalMetadata, Buffer.alloc(originalBytes.length), undefined, undefined],
+        [originalMetadata, originalBytes, undefined, 'symlink'],
+        [originalMetadata, originalBytes, undefined, 'public'],
+        [undefined, undefined, 'HTTP 404 raw attendance data', undefined],
+    ] as const) {
+        const { call, stateDir } = await setup(t, result, undefined, error, bytes, shape)
+        const response = await call('archive_original', originalInput)
+        assert.ok(response.error)
+        assert.doesNotMatch(response.error, /raw attendance data/)
+        assert.deepEqual(await readdir(stateDir), [])
+    }
 })

@@ -8,8 +8,9 @@ const timestamp = z.string().datetime({ offset: true })
 const revision = z.string().min(1).max(128)
 const action = z.enum(['ENTRY', 'START_BREAK', 'END_BREAK', 'EXIT'])
 const centerFields = { clientId: identifier, centerId: identifier }
+const centerPlace = z.object({ kind: z.literal('CENTER'), ...centerFields }).strict()
 const place = z.discriminatedUnion('kind', [
-    z.object({ kind: z.literal('CENTER'), ...centerFields }).strict(),
+    centerPlace,
     z.object({ kind: z.literal('REMOTE') }).strict(),
 ])
 const participation = z.object({
@@ -35,7 +36,7 @@ const cursor = z.string().min(1).max(4096)
 const zone = z.string().min(1).max(50)
 const reason = z.string().min(1).max(500).regex(/\S/)
 const dayStatus = z.enum(['OFF', 'WORKING', 'ON_BREAK', 'CLOSED', 'JUSTIFIED', 'MISSING', 'OPEN_LATE', 'ERROR'])
-const requestStatus = z.enum(['PENDING', 'APPROVED', 'REJECTED'])
+const requestStatus = z.enum(['PENDING', 'APPROVED', 'REJECTED', 'WITHDRAWN'])
 const correctionKind = z.enum(['ADD', 'REPLACE', 'VOID', 'REVERT'])
 const pagination = { cursor: cursor.optional(), limit: z.number().int().min(1).max(100).optional() }
 const schedule = z.object({
@@ -43,9 +44,15 @@ const schedule = z.object({
     zone, start: timestamp.nullish(), end: timestamp.nullish(),
 }).strict()
 const punch = z.object({ action, at: timestamp }).strict()
+const movement = z.object({
+    action, at: z.string().datetime().regex(/T\d{2}:\d{2}:\d{2}(?:\.\d{1,3}0{0,6})?Z$/), place,
+}).strict()
+const importedProposal = z.object({
+    kind: z.literal('ADD'), movement: movement.extend({ action: z.enum(['ENTRY', 'EXIT']), place: centerPlace }),
+}).strict()
 const dayRequest = z.object({
     id: requestId, employeeId, workDate: date, reason, createdAt: timestamp, status: requestStatus,
-    resolvedAt: timestamp.nullish(), resolutionReason: reason.nullish(),
+    resolvedAt: timestamp.nullish(), resolutionReason: reason.nullish(), proposedChange: importedProposal.optional(),
 }).strict()
 
 export const daySubject = z.object({ employeeId, date }).strict()
@@ -89,9 +96,6 @@ export const day = z.object({
 }).strict()
 export const requestsPage = z.object({ rows: z.array(dayRequest), nextCursor: cursor.nullish() }).strict()
 
-const movement = z.object({
-    action, at: z.string().datetime().regex(/T\d{2}:\d{2}:\d{2}(?:\.\d{1,3}0{0,6})?Z$/), place,
-}).strict()
 const singleMovementChange = z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('ADD'), movement }).strict(),
     z.object({ kind: z.literal('REPLACE'), punchId: requestId, movement }).strict(),
@@ -178,3 +182,48 @@ export const reportReceipt = z.object({
 export const reportXlsx = z.object({
     requestId, filename: z.string().regex(/^presencia-\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}\.xlsx$/), bytes: count.positive(),
 }).strict()
+
+const archiveCursor = z.string().min(1).max(4096)
+const archiveKind = z.enum(['RECEIPT', 'DECISION'])
+const archiveSHA256 = z.string().regex(/^[a-f0-9]{64}$/)
+const archiveUUID = z.string().regex(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/)
+export const maxArchiveOriginalBytes = 128 << 10
+const archivedDay = z.object({
+    workDate: reportDate, originalCount: z.union([z.literal(0), z.number().int().min(2).max(1024)]),
+}).strict()
+const archivedOriginal = z.object({
+    kind: archiveKind, id: archiveUUID, eventId: archiveUUID, keyId: archiveUUID, sha256: archiveSHA256,
+    revision: z.string().regex(/^[1-9][0-9]{0,19}$/), origin: z.enum(['TERMINAL', 'EMPLOYEE', 'MANUAL']),
+}).strict()
+
+export const archiveFilter = z.object({
+    employeeId, from: reportDate, until: reportDate, cursor: archiveCursor.optional(), limit: z.number().int().min(1).max(100).optional(),
+}).strict()
+export const archiveSubject = z.object({ employeeId, date: reportDate }).strict()
+export const archiveOriginalInput = archiveSubject.extend({ kind: archiveKind, originalId: requestId })
+export const archivePage = z.object({
+    employeeId, days: z.array(archivedDay).max(100), nextCursor: archiveCursor.nullish(),
+}).strict()
+
+const archiveTime = z.string().max(32).nullable()
+const archiveText = z.string().max(64).nullable()
+const archiveCenter = z.object(centerFields).strict()
+const classicMovement = z.object({
+    punchId: z.number().int().safe(), civilTime: archiveTime, occurredAtUtc: archiveTime, action: archiveText, method: archiveText,
+    effective: z.boolean(), originalPunchId: z.number().int().safe().nullable(), correctedBy: archiveText,
+    ruleCenter: archiveCenter, observedCenter: archiveCenter,
+    audit: z.object({ createdBy: archiveText, createdAt: archiveTime, updatedBy: archiveText, updatedAt: archiveTime }).strict(),
+}).strict()
+const classicSummary = z.object({
+    firstClockIn: archiveTime, lastClockOut: archiveTime, totalWorkMins: z.number().int(), totalBreakMins: z.number().int(),
+    effectiveMins: z.number().int(), expectedMins: z.number().int(), deviationMins: z.number().int(),
+    status: z.string().max(64), punches: z.number().int(),
+}).strict()
+export const archiveDay = z.object({
+    employeeId, day: archivedDay, originals: z.array(archivedOriginal).max(1024),
+    classic: z.object({ movements: z.array(classicMovement).max(2048), summary: classicSummary }).strict().optional(),
+}).strict()
+export const archiveOriginalFile = archiveSubject.extend({
+    kind: archiveKind, id: archiveUUID, filename: z.string(), bytes: z.number().int().min(1).max(maxArchiveOriginalBytes),
+    sha256: archiveSHA256,
+})

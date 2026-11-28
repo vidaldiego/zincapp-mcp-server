@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import {
-    assistedPunch, configurationChange, correctionInput, daysFilters, daySubject,
+    archiveFilter, archiveOriginalInput, archiveSubject, assistedPunch, configurationChange, correctionInput, daysFilters, daySubject,
     employeeId, reportFilter, reportRequest, requestId, requestsFilters, resolutionInput,
 } from './presencia-contract.js'
 import { OfficePresencia, PresenciaToolError } from './presencia-office.js'
@@ -24,6 +24,21 @@ function safe<T>(handler: (input: T) => Promise<unknown>) {
 }
 
 export function registerOfficePresencia(server: McpServer, presencia: OfficePresencia) {
+    server.registerTool('attendance_presencia_archive_list', {
+        description: 'Lista jornadas históricas de un empleado dentro de un periodo inclusivo. Usa nextCursor con el mismo empleado y fechas para pedir otra página.',
+        inputSchema: archiveFilter, annotations: readOnly,
+    }, safe((input: z.output<typeof archiveFilter>) => presencia.listArchive(input)))
+
+    server.registerTool('attendance_presencia_archive_day', {
+        description: 'Consulta una jornada histórica exacta: movimientos y resumen del registro clásico o listado de los originales firmados.',
+        inputSchema: archiveSubject, annotations: readOnly,
+    }, safe((input: z.output<typeof archiveSubject>) => presencia.getArchiveDay(input)))
+
+    server.registerTool('attendance_presencia_archive_original', {
+        description: 'Descarga un recibo o decisión firmados de una jornada histórica con los permisos vigentes de oficina. Devuelve metadatos y la ruta del archivo local privado.',
+        inputSchema: archiveOriginalInput, annotations: privateReview,
+    }, safe((input: z.output<typeof archiveOriginalInput>) => presencia.downloadArchiveOriginal(input)))
+
     server.registerTool('attendance_presencia_configuration_get', {
         description: 'Consulta la configuración de Presencia de un empleado (ID explícito) con el perfil de oficina fijado.',
         inputSchema: z.object({ employeeId }).strict(), annotations: readOnly,
